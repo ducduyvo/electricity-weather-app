@@ -21,6 +21,15 @@ func outlookSignals(days []DailySummary) []Signal {
 		days = days[:14]
 	}
 
+	// Pre-parse dates once upfront in UTC to avoid repeated allocations in inner loops
+	parsedDates := make([]time.Time, len(days))
+	for i, d := range days {
+		t, err := time.Parse("2006-01-02", d.Date)
+		if err == nil {
+			parsedDates[i] = t
+		}
+	}
+
 	var signals []Signal
 
 	// Extract temperature only when daily measurements are complete.
@@ -39,7 +48,7 @@ func outlookSignals(days []DailySummary) []Signal {
 	// Detect both decreasing and increasing trends.
 	for _, direction := range []float64{decreasingTrend, increasingTrend} {
 		// TEMPERATURE TREND
-		startDay, endDay, found := trendPeriod(days, temperature, direction, func(startTemperature, endTemperature float64) bool {
+		startDay, endDay, found := trendPeriod(days, parsedDates, temperature, direction, func(startTemperature, endTemperature float64) bool {
 			return direction*(endTemperature-startTemperature) >= temperatureChangeThreshold
 		})
 
@@ -89,9 +98,8 @@ func outlookSignals(days []DailySummary) []Signal {
 		}
 
 		// SOLAR TREND
-		startDay, endDay, found = trendPeriod(days, solar, direction, func(startSolar, endSolar float64) bool {
-			solarChange := endSolar - startSolar
-			return direction*solarChange >= solarChangeThreshold
+		startDay, endDay, found = trendPeriod(days, parsedDates, solar, direction, func(startSolar, endSolar float64) bool {
+			return direction*(endSolar-startSolar) >= solarChangeThreshold
 		})
 
 		if found {
@@ -148,7 +156,7 @@ func outlookSignals(days []DailySummary) []Signal {
 // - Significant overall change
 //
 // Returns the start day, end day, and whether a trend was found.
-func trendPeriod(days []DailySummary, getMeasurement func(DailySummary) (float64, bool), direction float64, isSignificantChange func(float64, float64) bool) (DailySummary, DailySummary, bool) {
+func trendPeriod(days []DailySummary, parsedDates []time.Time, getMeasurement func(DailySummary) (float64, bool), direction float64, isSignificantChange func(float64, float64) bool) (DailySummary, DailySummary, bool) {
 	var bestStartDay DailySummary
 	var bestEndDay DailySummary
 
@@ -156,15 +164,6 @@ func trendPeriod(days []DailySummary, getMeasurement func(DailySummary) (float64
 
 	if len(days) < minTrendDays {
 		return DailySummary{}, DailySummary{}, false
-	}
-
-	// Pre-parse dates once upfront in UTC to avoid repeated allocations in inner loops
-	parsedDates := make([]time.Time, len(days))
-	for i, d := range days {
-		t, err := time.Parse("2006-01-02", d.Date)
-		if err == nil {
-			parsedDates[i] = t
-		}
 	}
 
 	bestChange := 0.0
