@@ -40,10 +40,9 @@ func TestOpenMeteoMapping(t *testing.T) {
 	if len(got.Daily) != 2 || *got.Daily[0].AvgTemperature != 6 || got.Daily[0].SolarEnergyKWhM2 != 0.5 {
 		t.Fatalf("bad summary: %+v", got.Daily)
 	}
-	if len(got.Signals) != 3 ||
+	if len(got.Signals) != 2 ||
 		got.Signals[0].Title != "Solar period expected" ||
-		got.Signals[1].Title != "Colder tomorrow" ||
-		got.Signals[2].Title != "Limited comparison data" {
+		got.Signals[1].Title != "Limited comparison data" {
 		t.Fatalf("bad signals: %+v", got.Signals)
 	}
 }

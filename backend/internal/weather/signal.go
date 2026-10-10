@@ -2,6 +2,7 @@ package weather
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -46,7 +47,7 @@ func signals(days []DailySummary) []Signal {
 	}
 
 	today, tomorrow := days[0], days[1]
-	temperatureAvailable := today.AvgTemperature != nil && tomorrow.AvgTemperature != nil
+	temperatureAvailable := completeTemperature(today) && completeTemperature(tomorrow)
 	solarAvailable := completeSolar(today) && completeSolar(tomorrow)
 
 	var delta, solarChange float64
@@ -118,10 +119,8 @@ func signals(days []DailySummary) []Signal {
 			Title:    "Limited comparison data",
 			Detail:   "Some day-on-day insights are unavailable because temperature or solar readings are missing. Available readings still support the displayed insights.",
 		})
-	} else if delta > -temperatureChangeThreshold &&
-		delta < temperatureChangeThreshold &&
-		solarChange > -solarChangeThreshold &&
-		solarChange < solarChangeThreshold {
+	} else if math.Abs(delta) < temperatureChangeThreshold &&
+		math.Abs(solarChange) < solarChangeThreshold {
 		out = append(out, Signal{
 			Kind:     "weather",
 			Severity: "normal",
@@ -179,6 +178,12 @@ func temperatureSignal(delta, today, tomorrow float64) *Signal {
 	}
 
 	return nil
+}
+
+// Compare daily means only when the entire day has temperature readings.
+func completeTemperature(day DailySummary) bool {
+	return day.CompleteDay && day.HourCount > 0 &&
+		day.TemperatureSampleCount == day.HourCount && day.AvgTemperature != nil
 }
 
 func completeSolar(day DailySummary) bool {

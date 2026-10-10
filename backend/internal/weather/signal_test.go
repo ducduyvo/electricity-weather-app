@@ -1,6 +1,7 @@
 package weather
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -85,18 +86,20 @@ func TestCombinedOutlooks(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := signals([]DailySummary{
 				{
-					AvgTemperature:   f(tt.today),
-					SolarEnergyKWhM2: 4,
-					SolarSampleCount: 24,
-					HourCount:        24,
-					CompleteDay:      true,
+					AvgTemperature:         f(tt.today),
+					SolarEnergyKWhM2:       4,
+					SolarSampleCount:       24,
+					HourCount:              24,
+					CompleteDay:            true,
+					TemperatureSampleCount: 24,
 				},
 				{
-					AvgTemperature:   f(tt.tomorrow),
-					SolarEnergyKWhM2: tt.solar,
-					SolarSampleCount: 24,
-					HourCount:        24,
-					CompleteDay:      true,
+					AvgTemperature:         f(tt.tomorrow),
+					SolarEnergyKWhM2:       tt.solar,
+					SolarSampleCount:       24,
+					HourCount:              24,
+					CompleteDay:            true,
+					TemperatureSampleCount: 24,
 				},
 			})
 			if tt.title != "" {
@@ -136,8 +139,8 @@ func TestMissingSolarDoesNotImplyDrop(t *testing.T) {
 			findSignal(got, "Potentially tighter weather-driven conditions") != nil {
 			t.Fatalf("missing solar produced comparison %+v", got)
 		}
-		if findSignal(got, "Colder tomorrow") == nil || findSignal(got, "Limited comparison data") == nil {
-			t.Fatalf("available temperature lost %+v", got)
+		if findSignal(got, "Colder tomorrow") != nil || findSignal(got, "Limited comparison data") == nil {
+			t.Fatalf("partial temperature compared %+v", got)
 		}
 	}
 }
@@ -164,18 +167,20 @@ func TestZeroSolarAndInsufficientForecast(t *testing.T) {
 func TestPartialSolarSuppressesComparison(t *testing.T) {
 	days := []DailySummary{
 		{
-			AvgTemperature:   f(10),
-			SolarEnergyKWhM2: 4,
-			SolarSampleCount: 24,
-			HourCount:        24,
-			CompleteDay:      true,
+			AvgTemperature:         f(10),
+			SolarEnergyKWhM2:       4,
+			SolarSampleCount:       24,
+			HourCount:              24,
+			CompleteDay:            true,
+			TemperatureSampleCount: 24,
 		},
 		{
-			AvgTemperature:   f(5),
-			SolarEnergyKWhM2: 1,
-			SolarSampleCount: 12,
-			HourCount:        24,
-			CompleteDay:      true,
+			AvgTemperature:         f(5),
+			SolarEnergyKWhM2:       1,
+			SolarSampleCount:       12,
+			HourCount:              24,
+			CompleteDay:            true,
+			TemperatureSampleCount: 24,
 		},
 	}
 	if got := signals(days); findSignal(got, "Lower solar availability") != nil {
@@ -186,21 +191,58 @@ func TestPartialSolarSuppressesComparison(t *testing.T) {
 func TestZeroBaselineAllowsSolarDelta(t *testing.T) {
 	got := signals([]DailySummary{
 		{
-			AvgTemperature:   f(10),
-			SolarEnergyKWhM2: 0,
-			SolarSampleCount: 24,
-			HourCount:        24,
-			CompleteDay:      true,
+			AvgTemperature:         f(10),
+			SolarEnergyKWhM2:       0,
+			SolarSampleCount:       24,
+			HourCount:              24,
+			CompleteDay:            true,
+			TemperatureSampleCount: 24,
 		},
 		{
-			AvgTemperature:   f(10),
-			SolarEnergyKWhM2: 4,
-			SolarSampleCount: 24,
-			HourCount:        24,
-			CompleteDay:      true,
+			AvgTemperature:         f(10),
+			SolarEnergyKWhM2:       4,
+			SolarSampleCount:       24,
+			HourCount:              24,
+			CompleteDay:            true,
+			TemperatureSampleCount: 24,
 		},
 	})
 	if findSignal(got, "Higher solar availability") == nil || findSignal(got, "Limited comparison data") != nil {
 		t.Fatalf("zero baseline %+v", got)
+	}
+}
+
+func TestIncompleteTemperatureSuppressesComparisons(t *testing.T) {
+	for _, invalidDay := range []int{0, 1} {
+		for _, missing := range []string{"partial day", "missing reading", "missing average", "empty day"} {
+			t.Run(fmt.Sprintf("day=%d/%s", invalidDay, missing), func(t *testing.T) {
+				days := trendDays([]float64{10, 5}, []float64{4, 2})
+				switch missing {
+				case "partial day":
+					days[invalidDay].CompleteDay = false
+				case "missing reading":
+					days[invalidDay].TemperatureSampleCount--
+				case "missing average":
+					days[invalidDay].AvgTemperature = nil
+				case "empty day":
+					days[invalidDay].HourCount = 0
+					days[invalidDay].TemperatureSampleCount = 0
+				}
+				got := signals(days)
+				for _, signal := range got {
+					if signal.Kind == "temperature" || signal.Kind == "combined" || signal.Title == "Stable weather outlook" {
+						t.Fatalf("incomplete temperature produced comparison: %+v", got)
+					}
+				}
+				if findSignal(got, "Limited comparison data") == nil {
+					t.Fatalf("missing data-quality signal: %+v", got)
+				}
+				if missing == "missing reading" || missing == "missing average" {
+					if findSignal(got, "Lower solar availability") == nil {
+						t.Fatalf("valid solar comparison lost: %+v", got)
+					}
+				}
+			})
+		}
 	}
 }

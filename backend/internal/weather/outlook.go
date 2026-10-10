@@ -2,6 +2,7 @@ package weather
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -152,44 +153,63 @@ func trendPeriod(days []DailySummary, getMeasurement func(DailySummary) (float64
 	var bestEndDay DailySummary
 
 	const minTrendDays = 3
-	longestTrendDays := 0
+
+	if len(days) < minTrendDays {
+		return DailySummary{}, DailySummary{}, false
+	}
+
+	// Pre-parse dates once upfront in UTC to avoid repeated allocations in inner loops
+	parsedDates := make([]time.Time, len(days))
+	for i, d := range days {
+		t, err := time.Parse("2006-01-02", d.Date)
+		if err == nil {
+			parsedDates[i] = t
+		}
+	}
+
+	bestChange := 0.0
+	bestTrendDays := 0
 	found := false
 
-	// Try each day as the start of a possible trend.
 	for startIndex, startDay := range days {
 		startValue, valid := getMeasurement(startDay)
-		if !valid {
-			continue
-		}
-		// Reject invalid starting dates.
-		if _, err := time.Parse("2006-01-02", startDay.Date); err != nil {
+		if !valid || parsedDates[startIndex].IsZero() {
 			continue
 		}
 
 		previousValue := startValue
 		changeCount := 0
 
-		// Examine subsequent days.
 		for endIndex := startIndex + 1; endIndex < len(days); endIndex++ {
 			endDay := days[endIndex]
 
 			currentValue, valid := getMeasurement(endDay)
-			previousDate, previousDateErr := time.Parse("2006-01-02", days[endIndex-1].Date)
-			currentDate, currentDateErr := time.Parse("2006-01-02", endDay.Date)
-			dailyChange := currentValue - previousValue
+			currentDate := parsedDates[endIndex]
+			previousDate := parsedDates[endIndex-1]
 
-			if !valid || previousDateErr != nil || currentDateErr != nil || !currentDate.Equal(previousDate.AddDate(0, 0, 1)) || direction*dailyChange < 0 {
+			if !valid || currentDate.IsZero() || !currentDate.Equal(previousDate.AddDate(0, 0, 1)) {
 				break
 			}
 
-			// Include both the start and end days.
-			dayCount := endIndex - startIndex + 1
+			dailyChange := currentValue - previousValue
+			if direction*dailyChange < 0 {
+				break
+			}
 
-			// Keep the longest qualifying trend.
-			if dayCount >= minTrendDays && changeCount >= 2 && isSignificantChange(startValue, currentValue) && (!found || dayCount > longestTrendDays) {
+			if dailyChange != 0 {
+				changeCount++
+			}
+
+			dayCount := endIndex - startIndex + 1
+			totalChange := math.Abs(currentValue - startValue)
+
+			// Magnitude first, shorter duration second.
+			if dayCount >= minTrendDays && changeCount >= 2 && isSignificantChange(startValue, currentValue) &&
+				(!found || totalChange > bestChange || (totalChange == bestChange && dayCount < bestTrendDays)) {
 				bestStartDay = startDay
 				bestEndDay = endDay
-				longestTrendDays = dayCount
+				bestChange = totalChange
+				bestTrendDays = dayCount
 				found = true
 			}
 

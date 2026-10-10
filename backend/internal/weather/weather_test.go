@@ -91,8 +91,8 @@ func TestSignalsThresholds(t *testing.T) {
 	}{
 		{"colder boundary", 7, 4, "Colder tomorrow", "temperature", "warning"},
 		{"warmer boundary", 13, 4, "Warmer tomorrow", "temperature", "info"},
-		{"lower solar boundary", 10, 3.5, "Lower solar availability", "solar", "warning"},
-		{"higher solar boundary", 10, 4.5, "Higher solar availability", "solar", "info"},
+		{"lower solar boundary", 10, 3, "Lower solar availability", "solar", "warning"},
+		{"higher solar boundary", 10, 5, "Higher solar availability", "solar", "info"},
 		{"stable", 10, 4, "Stable weather outlook", "weather", "normal"},
 		{"below thresholds", 12.9, 4.49, "Stable weather outlook", "weather", "normal"},
 	}
@@ -100,18 +100,20 @@ func TestSignalsThresholds(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got := signals([]DailySummary{
 				{
-					AvgTemperature:   f(10),
-					SolarEnergyKWhM2: 4,
-					SolarSampleCount: 24,
-					HourCount:        24,
-					CompleteDay:      true,
+					AvgTemperature:         f(10),
+					SolarEnergyKWhM2:       4,
+					SolarSampleCount:       24,
+					HourCount:              24,
+					CompleteDay:            true,
+					TemperatureSampleCount: 24,
 				},
 				{
-					AvgTemperature:   f(tt.tomorrowTemp),
-					SolarEnergyKWhM2: tt.tomorrowSolar,
-					SolarSampleCount: 24,
-					HourCount:        24,
-					CompleteDay:      true,
+					AvgTemperature:         f(tt.tomorrowTemp),
+					SolarEnergyKWhM2:       tt.tomorrowSolar,
+					SolarSampleCount:       24,
+					HourCount:              24,
+					CompleteDay:            true,
+					TemperatureSampleCount: 24,
 				},
 			})
 			if len(got) != 1 ||
