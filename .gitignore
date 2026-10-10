@@ -1,0 +1,11 @@
+.DS_Store
+__MACOSX/
+node_modules/
+frontend/dist/
+.env
+.env.*
+!.env.example
+coverage/
+node_modules/
+dist/
+
