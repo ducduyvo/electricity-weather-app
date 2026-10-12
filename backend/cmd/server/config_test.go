@@ -61,3 +61,28 @@ func TestLoadConfigInvalid(t *testing.T) {
 		})
 	}
 }
+
+func TestWindInsightConfiguration(t *testing.T) {
+	t.Setenv("WIND_SPEED_CHANGE_MS", "4.5")
+	t.Setenv("WIND_MIN_LOW_HOURS", "18")
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WindInsights.SpeedChange != 4.5 || cfg.WindInsights.MinimumLowHours != 18 {
+		t.Fatalf("wind overrides: %+v", cfg.WindInsights)
+	}
+	for _, tt := range []struct{ name, value string }{
+		{"WIND_SPEED_CHANGE_MS", "NaN"}, {"WIND_LOW_SPEED_MS", "-1"},
+		{"WIND_DIRECTION_CHANGE_DEG", "181"}, {"WIND_DIRECTION_CONSISTENCY", "1.1"},
+		{"WIND_STRONG_SPEED_MS", "2"}, {"WIND_MIN_LOW_HOURS", "6"},
+		{"WIND_MIN_LOW_DAYS", "15"}, {"WIND_COMBINED_LOW_SOLAR_KWH_M2", "Inf"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(tt.name, tt.value)
+			if _, err := loadConfig(); err == nil {
+				t.Fatal("invalid wind config accepted")
+			}
+		})
+	}
+}

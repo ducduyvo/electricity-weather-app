@@ -29,7 +29,7 @@ func run() error {
 
 	client := &http.Client{Timeout: cfg.ClientTimeout}
 	defer client.CloseIdleConnections()
-	upstream := weather.OpenMeteo{Client: client, BaseURL: cfg.OpenMeteoURL}
+	upstream := weather.OpenMeteo{Client: client, BaseURL: cfg.OpenMeteoURL, WindInsights: &cfg.WindInsights}
 	provider := &weather.Cached{Next: upstream, TTL: cfg.CacheTTL}
 	handler := weather.NewHandler(provider)
 	mux := http.NewServeMux()

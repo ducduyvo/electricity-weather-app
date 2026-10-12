@@ -53,12 +53,12 @@ func TestForecastHTTPJSONContract(t *testing.T) {
 			var days []map[string]json.RawMessage
 			_ = json.Unmarshal(payload["daily"], &days)
 			if !empty {
-				for _, key := range []string{"date", "minTemperature", "maxTemperature", "avgTemperature", "solarEnergyKWhM2", "peakSolarIrradiance", "solarSampleCount", "hourCount", "expectedHourCount", "completeDay", "temperatureSampleCount"} {
+				for _, key := range []string{"date", "minTemperature", "maxTemperature", "avgTemperature", "solarEnergyKWhM2", "peakSolarIrradiance", "solarSampleCount", "hourCount", "expectedHourCount", "completeDay", "temperatureSampleCount", "minWindSpeed", "meanWindSpeed", "maxWindSpeed", "windSampleCount", "meanWindDirection", "windDirectionSampleCount", "windDirectionConsistency"} {
 					if _, ok := days[0][key]; !ok {
 						t.Fatalf("missing daily field %s", key)
 					}
 				}
-				for _, key := range []string{"minTemperature", "maxTemperature", "avgTemperature", "peakSolarIrradiance"} {
+				for _, key := range []string{"minTemperature", "maxTemperature", "avgTemperature", "peakSolarIrradiance", "minWindSpeed", "meanWindSpeed", "maxWindSpeed", "meanWindDirection"} {
 					if string(days[0][key]) != "null" {
 						t.Fatalf("%s missing reading fabricated", key)
 					}

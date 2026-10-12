@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -40,7 +42,7 @@ func TestHandlerWeather(t *testing.T) {
 			handler := NewHandler(fakeProvider(func(ctx context.Context, lat, lon float64) (Forecast, error) {
 				called = true
 				if tt.fail {
-					return Forecast{}, errors.New("private upstream detail")
+					return Forecast{}, &ProviderError{Operation: "fetch forecast", Kind: ErrProviderUnavailable, Cause: errors.New("private upstream detail")}
 				}
 				return Forecast{
 					Latitude:  lat,
@@ -113,5 +115,32 @@ func TestWeatherRouteRejectsPost(t *testing.T) {
 	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/weather", nil))
 	if recorder.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status %d", recorder.Code)
+	}
+}
+
+func TestHandlerErrorCategories(t *testing.T) {
+	for _, tt := range []struct {
+		err    error
+		status int
+	}{
+		{ErrInvalidCoordinates, 400},
+		{fmt.Errorf("private wrapper: %w", ErrProviderUnavailable), 503}, {ErrInvalidLocation, 422}, {ErrProviderResponse, 502},
+		{ErrProviderUnavailable, 503}, {ErrProviderConfiguration, 500}, {errors.New("private details"), 500},
+	} {
+		handler := NewHandler(fakeProvider(func(context.Context, float64, float64) (Forecast, error) {
+			return Forecast{}, &ProviderError{Operation: "private operation", Kind: tt.err, Cause: errors.New("private cause")}
+		}))
+		recorder := httptest.NewRecorder()
+		handler.Weather(recorder, httptest.NewRequest("GET", "/api/weather?lat=60&lon=24", nil))
+		if recorder.Code != tt.status {
+			t.Fatalf("%v: status %d, want %d", tt.err, recorder.Code, tt.status)
+		}
+		var body map[string]string
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if recorder.Header().Get("Content-Type") != "application/json" || strings.Contains(body["error"], "private") {
+			t.Fatal("unsafe error response")
+		}
 	}
 }

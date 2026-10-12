@@ -15,9 +15,10 @@ func TestOpenMeteoMapping(t *testing.T) {
 		if r.Method != http.MethodGet ||
 			q.Get("latitude") != "60.1700" ||
 			q.Get("longitude") != "24.9400" ||
-			q.Get("hourly") != "temperature_2m,shortwave_radiation" ||
+			q.Get("hourly") != "temperature_2m,shortwave_radiation,wind_speed_120m,wind_direction_120m" ||
 			q.Get("forecast_days") != "14" ||
-			q.Get("timezone") != "auto" {
+			q.Get("timezone") != "auto" ||
+			q.Get("wind_speed_unit") != "ms" {
 			t.Error("unexpected upstream request", r.URL)
 		}
 		_, _ = w.Write([]byte(`{"latitude":60.17,"longitude":24.94,"timezone":"Europe/Helsinki","hourly":{"time":["2026-10-07T00:00","2026-10-07T01:00","2026-10-08T00:00"],"temperature_2m":[4,8,1],"shortwave_radiation":[0,500,250]}}`))

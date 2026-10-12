@@ -180,18 +180,8 @@ func temperatureSignal(delta, today, tomorrow float64) *Signal {
 	return nil
 }
 
-// Compare daily means only when the entire day has temperature readings.
-func completeTemperature(day DailySummary) bool {
-	return day.CompleteDay && day.HourCount > 0 &&
-		day.TemperatureSampleCount == day.HourCount && day.AvgTemperature != nil
-}
-
-func completeSolar(day DailySummary) bool {
-	return day.HourCount > 0 && day.SolarSampleCount == day.HourCount && day.CompleteDay
-}
-
 func solarPeakSignal(day DailySummary) *Signal {
-	if day.PeakSolarIrradiance == nil || *day.PeakSolarIrradiance <= 0 {
+	if !validSolarIrradiance(day.PeakSolarIrradiance) || *day.PeakSolarIrradiance <= 0 {
 		return nil
 	}
 

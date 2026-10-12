@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,50 +15,64 @@ import (
 const DefaultBaseURL = "https://api.open-meteo.com/v1/forecast"
 
 type OpenMeteo struct {
-	Client  *http.Client
-	BaseURL string
+	WindInsights *WindInsightConfig
+	Client       *http.Client
+	BaseURL      string
 }
 type omResponse struct {
 	Latitude  float64 `json:"latitude"`
 	Longitude float64 `json:"longitude"`
 	Timezone  string  `json:"timezone"`
 	Hourly    struct {
-		Time        []string   `json:"time"`
-		Temperature []*float64 `json:"temperature_2m"`
-		Solar       []*float64 `json:"shortwave_radiation"`
+		Time          []string   `json:"time"`
+		Temperature   []*float64 `json:"temperature_2m"`
+		WindSpeed     []*float64 `json:"wind_speed_120m"`
+		WindDirection []*float64 `json:"wind_direction_120m"`
+		Solar         []*float64 `json:"shortwave_radiation"`
 	} `json:"hourly"`
 }
 
 func (o OpenMeteo) Forecast(ctx context.Context, lat, lon float64) (Forecast, error) {
+	if err := Validate(lat, lon); err != nil {
+		return Forecast{}, err
+	}
 	base := o.BaseURL
 	if base == "" {
 		base = DefaultBaseURL
 	}
 	u, err := url.Parse(base)
 	if err != nil {
-		return Forecast{}, fmt.Errorf("parse Open-Meteo URL: %w", err)
+		return Forecast{}, &ProviderError{Operation: "parse Open-Meteo URL", Kind: ErrProviderConfiguration, Cause: err}
 	}
 	q := u.Query()
 	q.Set("latitude", strconv.FormatFloat(lat, 'f', 4, 64))
 	q.Set("longitude", strconv.FormatFloat(lon, 'f', 4, 64))
-	q.Set("hourly", "temperature_2m,shortwave_radiation")
+	q.Set("hourly", "temperature_2m,shortwave_radiation,wind_speed_120m,wind_direction_120m")
 	q.Set("forecast_days", "14")
 	q.Set("timezone", "auto")
+	q.Set("wind_speed_unit", "ms")
 
 	u.RawQuery = q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return Forecast{}, fmt.Errorf("create Open-Meteo request: %w", err)
+		return Forecast{}, &ProviderError{Operation: "create Open-Meteo request", Kind: ErrProviderConfiguration, Cause: err}
 	}
 	resp, err := o.Client.Do(req)
 	if err != nil {
-		return Forecast{}, fmt.Errorf("fetch Open-Meteo forecast: %w", err)
+		return Forecast{}, &ProviderError{Operation: "fetch Open-Meteo forecast", Kind: ErrProviderUnavailable, Cause: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return Forecast{}, fmt.Errorf("weather provider status %d", resp.StatusCode)
+		kind := ErrProviderResponse
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			kind = ErrProviderUnavailable
+		}
+		return Forecast{}, &ProviderError{Operation: "fetch Open-Meteo forecast", Kind: kind, StatusCode: resp.StatusCode}
 	}
-	bodyBytes, _ := io.ReadAll(resp.Body)
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Forecast{}, &ProviderError{Operation: "read Open-Meteo forecast", Kind: ErrProviderResponse, Cause: err}
+	}
 	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 	slog.Info("Open-Meteo response received",
@@ -69,7 +82,7 @@ func (o OpenMeteo) Forecast(ctx context.Context, lat, lon float64) (Forecast, er
 	)
 	var raw omResponse
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return Forecast{}, fmt.Errorf("decode Open-Meteo forecast: %w", err)
+		return Forecast{}, &ProviderError{Operation: "decode Open-Meteo forecast", Kind: ErrProviderResponse, Cause: err}
 	}
 	n := len(raw.Hourly.Time)
 	points := make([]Point, 0, n)
@@ -81,7 +94,17 @@ func (o OpenMeteo) Forecast(ctx context.Context, lat, lon float64) (Forecast, er
 		if i < len(raw.Hourly.Solar) {
 			s = raw.Hourly.Solar[i]
 		}
+		var windSpeed, windDirection *float64
+		if i < len(raw.Hourly.WindSpeed) {
+			windSpeed = validWindValue(raw.Hourly.WindSpeed[i], false)
+		}
+		if i < len(raw.Hourly.WindDirection) {
+			windDirection = validWindValue(raw.Hourly.WindDirection[i], true)
+		}
 		points = append(points, Point{
+			WindSpeed:       windSpeed,
+			WindDirection:   windDirection,
+			WindPotential:   windPotential(windSpeed),
 			Time:            raw.Hourly.Time[i],
 			Temperature:     t,
 			SolarIrradiance: s,
@@ -97,5 +120,11 @@ func (o OpenMeteo) Forecast(ctx context.Context, lat, lon float64) (Forecast, er
 	f.Daily = summarize(points, f.Timezone)
 	f.Signals = signals(f.Daily)
 	f.OutlookSignals = outlookSignals(f.Daily)
+	windCfg := DefaultWindInsightConfig()
+	if o.WindInsights != nil {
+		windCfg = *o.WindInsights
+	}
+	f.Signals = mergeWindInsights(f.Signals, hourlyWindInsights(points, f.Timezone, f.FetchedAt, windCfg))
+	f.OutlookSignals = mergeWindInsights(f.OutlookSignals, dailyWindInsights(f.Daily, windCfg))
 	return f, nil
 }

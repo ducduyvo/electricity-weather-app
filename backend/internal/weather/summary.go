@@ -1,6 +1,7 @@
 package weather
 
 import (
+	"math"
 	"sort"
 	"time"
 	_ "time/tzdata"
@@ -16,6 +17,10 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 	}
 
 	type dailyAgg struct {
+		directionSin, directionCos  float64
+		directionCount              int
+		windSum, minWind, maxWind   float64
+		windCount                   int
 		tempSum                     float64
 		tempSampleCount             int
 		minTemp, maxTemp            float64
@@ -65,7 +70,25 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 		agg.seenSlots[point.Time]++
 		agg.hourCount++
 
-		if point.Temperature != nil {
+		if speed := validWindValue(point.WindSpeed, false); speed != nil {
+			agg.windSum += *speed
+			if agg.windCount == 0 || *speed < agg.minWind {
+				agg.minWind = *speed
+			}
+			if agg.windCount == 0 || *speed > agg.maxWind {
+				agg.maxWind = *speed
+			}
+			agg.windCount++
+			// Equal-weight circular mean of wind-from bearings; calm winds have no direction.
+			if direction := validWindValue(point.WindDirection, true); direction != nil && *speed > 0 {
+				radians := *direction * math.Pi / 180
+				agg.directionSin += math.Sin(radians)
+				agg.directionCos += math.Cos(radians)
+				agg.directionCount++
+			}
+		}
+
+		if validTemperature(point.Temperature) {
 			temp := *point.Temperature
 			if agg.tempSampleCount == 0 || temp < agg.minTemp {
 				agg.minTemp = temp
@@ -77,7 +100,7 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 			agg.tempSampleCount++
 		}
 
-		if point.SolarIrradiance != nil && *point.SolarIrradiance >= 0 {
+		if validSolarIrradiance(point.SolarIrradiance) {
 			irradiance := *point.SolarIrradiance
 			agg.solarSampleCount++
 			agg.solarEnergy += irradiance / 1000
@@ -94,15 +117,33 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 	for _, date := range dates {
 		agg := aggByDate[date]
 		summary := DailySummary{
-			Date:                   date,
-			SolarEnergyKWhM2:       agg.solarEnergy,
-			PeakSolarIrradiance:    agg.peakIrradiance,
-			PeakSolarTime:          agg.peakTime,
-			SolarSampleCount:       agg.solarSampleCount,
-			HourCount:              agg.hourCount,
-			ExpectedHourCount:      agg.expectedHourCount,
-			CompleteDay:            agg.hourCount == agg.expectedHourCount,
-			TemperatureSampleCount: agg.tempSampleCount,
+			Date:                     date,
+			WindDirectionSampleCount: agg.directionCount,
+			WindSampleCount:          agg.windCount,
+			SolarEnergyKWhM2:         agg.solarEnergy,
+			PeakSolarIrradiance:      agg.peakIrradiance,
+			PeakSolarTime:            agg.peakTime,
+			SolarSampleCount:         agg.solarSampleCount,
+			HourCount:                agg.hourCount,
+			ExpectedHourCount:        agg.expectedHourCount,
+			CompleteDay:              agg.hourCount == agg.expectedHourCount,
+			TemperatureSampleCount:   agg.tempSampleCount,
+		}
+		if agg.directionCount > 0 {
+			summary.WindDirectionConsistency = math.Hypot(agg.directionSin, agg.directionCos) / float64(agg.directionCount)
+		}
+		// Opposing bearings can cancel: do not invent a direction for an ambiguous mean.
+		if agg.directionCount > 0 && math.Hypot(agg.directionSin, agg.directionCos)/float64(agg.directionCount) > 1e-6 {
+			direction := math.Mod(math.Atan2(agg.directionSin, agg.directionCos)*180/math.Pi+360, 360)
+			summary.MeanWindDirection = &direction
+		}
+		if agg.windCount > 0 {
+			avgWind := agg.windSum / float64(agg.windCount)
+			minWind := agg.minWind
+			maxWind := agg.maxWind
+			summary.MinWindSpeed = &minWind
+			summary.MeanWindSpeed = &avgWind
+			summary.MaxWindSpeed = &maxWind
 		}
 		if agg.tempSampleCount > 0 {
 			avgTemp := agg.tempSum / float64(agg.tempSampleCount)

@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 )
 
 type config struct {
+	WindInsights  weather.WindInsightConfig
 	Address       string
 	OpenMeteoURL  string
 	ClientTimeout time.Duration
@@ -35,6 +38,43 @@ func loadConfig() (config, error) {
 	cfg.CacheTTL, err = positiveDuration("CACHE_TTL", "10m")
 	if err != nil {
 		return config{}, err
+	}
+	cfg.WindInsights = weather.DefaultWindInsightConfig()
+	for _, threshold := range []struct {
+		name  string
+		value *float64
+	}{
+		{name: "WIND_SPEED_CHANGE_MS", value: &cfg.WindInsights.SpeedChange},
+		{name: "WIND_LOW_SPEED_MS", value: &cfg.WindInsights.LowSpeed},
+		{name: "WIND_DIRECTION_CHANGE_DEG", value: &cfg.WindInsights.DirectionChange},
+		{name: "WIND_DIRECTION_CONSISTENCY", value: &cfg.WindInsights.DirectionConsistency},
+		{name: "WIND_STRONG_SPEED_MS", value: &cfg.WindInsights.StrongSpeed},
+		{name: "WIND_COMBINED_LOW_SOLAR_KWH_M2", value: &cfg.WindInsights.LowSolarDaily},
+		{name: "WIND_COMBINED_LOW_SOLAR_W_M2", value: &cfg.WindInsights.LowSolarHourly},
+	} {
+		raw := envOrDefault(threshold.name, strconv.FormatFloat(*threshold.value, 'f', -1, 64))
+		value, err := strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(value) || math.IsInf(value, 0) || value <= 0 {
+			return config{}, fmt.Errorf("%s must be a finite positive number", threshold.name)
+		}
+		*threshold.value = value
+	}
+	for _, threshold := range []struct {
+		name             string
+		value            *int
+		minimum, maximum int
+	}{
+		{name: "WIND_MIN_LOW_HOURS", value: &cfg.WindInsights.MinimumLowHours, minimum: 12, maximum: 72},
+		{name: "WIND_MIN_LOW_DAYS", value: &cfg.WindInsights.MinimumLowDays, minimum: 2, maximum: 14},
+	} {
+		value, err := strconv.Atoi(envOrDefault(threshold.name, strconv.Itoa(*threshold.value)))
+		if err != nil || value < threshold.minimum || value > threshold.maximum {
+			return config{}, fmt.Errorf("%s must be an integer between %d and %d", threshold.name, threshold.minimum, threshold.maximum)
+		}
+		*threshold.value = value
+	}
+	if cfg.WindInsights.DirectionChange > 180 || cfg.WindInsights.DirectionConsistency > 1 || cfg.WindInsights.StrongSpeed <= cfg.WindInsights.LowSpeed {
+		return config{}, fmt.Errorf("wind direction change must be <= 180, consistency <= 1, and strong speed > low speed")
 	}
 	u, err := url.Parse(cfg.OpenMeteoURL)
 	if err != nil {

@@ -222,7 +222,7 @@ p {
 
 .signals {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px 24px;
   margin-bottom: 24px;
 }
@@ -459,4 +459,75 @@ footer {
   border: 1px solid var(--border) !important;
   border-radius: 4px;
   font-size: 12px;
+}
+
+.daily-solar-summary,
+.daily-wind-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wind-chart-tooltip {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  font-size: 12px;
+  max-width: 280px;
+}
+
+.wind-chart-tooltip p {
+  margin: 0 0 4px;
+}
+
+.forecast-section-heading.MuiTypography-root {
+  margin-bottom: 12px;
+}
+
+.daily-card-heading {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.card .daily-card-temperature {
+  font-size: 28px;
+  line-height: 36px;
+}
+
+.daily-solar-summary {
+  margin-top: 4px;
+}
+
+.weather-metric-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.daily-metric-primary,
+.daily-metric-secondary {
+  display: block;
+}
+
+.daily-metric-primary {
+  font-weight: 600;
+}
+
+.daily-metric-secondary {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.daily-wind-direction {
+  display: flex;
+  margin-top: 4px;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
 }

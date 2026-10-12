@@ -34,7 +34,7 @@ func outlookSignals(days []DailySummary) []Signal {
 
 	// Extract temperature only when daily measurements are complete.
 	temperature := func(day DailySummary) (float64, bool) {
-		if !day.CompleteDay || day.HourCount == 0 || day.TemperatureSampleCount != day.HourCount || day.AvgTemperature == nil {
+		if !completeTemperature(day) {
 			return 0, false
 		}
 		return *day.AvgTemperature, true
@@ -46,90 +46,23 @@ func outlookSignals(days []DailySummary) []Signal {
 	}
 
 	// Detect both decreasing and increasing trends.
-	for _, direction := range []float64{decreasingTrend, increasingTrend} {
+	for _, trendDirection := range []float64{decreasingTrend, increasingTrend} {
 		// TEMPERATURE TREND
-		startDay, endDay, found := trendPeriod(days, parsedDates, temperature, direction, func(startTemperature, endTemperature float64) bool {
-			return direction*(endTemperature-startTemperature) >= temperatureChangeThreshold
+		startDay, endDay, found := trendPeriod(days, parsedDates, temperature, trendDirection, func(startTemperature, endTemperature float64) bool {
+			return trendDirection*(endTemperature-startTemperature) >= temperatureChangeThreshold
 		})
 
 		if found {
-			startTemperature := *startDay.AvgTemperature
-			endTemperature := *endDay.AvgTemperature
-			temperatureChange := endTemperature - startTemperature
-
-			title := "Warming trend"
-			severity := "info"
-			implication := "The heating/cooling demand implication depends on local conditions."
-
-			switch {
-			case direction == decreasingTrend && endTemperature < heatingReference:
-				title = "Cold spell developing"
-				severity = "warning"
-				implication = "Colder conditions may increase heating-driven electricity demand."
-
-			case direction == decreasingTrend && startTemperature > coolingReference:
-				title = "Cooling trend"
-				severity = "warning"
-				implication = "Cooling-driven electricity demand conditions may ease."
-
-			case direction == decreasingTrend:
-				title = "Cooling trend"
-				severity = "warning"
-
-			case direction == increasingTrend && endTemperature > coolingReference:
-				implication = "Warmer conditions may increase cooling-driven electricity demand."
-
-			case direction == increasingTrend && startTemperature < heatingReference:
-				implication = "Heating-driven electricity demand conditions may ease."
-			}
-
-			signals = append(signals, Signal{
-				Kind:     "temperature",
-				Severity: severity,
-				Title:    title,
-				Detail: fmt.Sprintf(
-					"Daily average temperature changes by %+.1f°C from %s through %s across consecutive forecast days. %s",
-					temperatureChange,
-					startDay.Date,
-					endDay.Date,
-					implication,
-				),
-			})
+			signals = append(signals, temperatureTrendSignal(startDay, endDay))
 		}
 
 		// SOLAR TREND
-		startDay, endDay, found = trendPeriod(days, parsedDates, solar, direction, func(startSolar, endSolar float64) bool {
-			return direction*(endSolar-startSolar) >= solarChangeThreshold
+		startDay, endDay, found = trendPeriod(days, parsedDates, solar, trendDirection, func(startSolar, endSolar float64) bool {
+			return trendDirection*(endSolar-startSolar) >= solarChangeThreshold
 		})
 
 		if found {
-			startSolar := startDay.SolarEnergyKWhM2
-			endSolar := endDay.SolarEnergyKWhM2
-
-			solarChange := endSolar - startSolar
-
-			title := "Solar availability improving"
-			severity := "info"
-			implication := "Higher irradiance may improve conditions for solar PV generation."
-
-			if direction == decreasingTrend {
-				title = "Solar availability weakening"
-				severity = "warning"
-				implication = "Lower irradiance may weaken conditions for solar PV generation."
-			}
-
-			signals = append(signals, Signal{
-				Kind:     "solar",
-				Severity: severity,
-				Title:    title,
-				Detail: fmt.Sprintf(
-					"The daily solar-energy proxy changes by %+.2f kWh/m² from %s through %s across consecutive forecast days. %s",
-					solarChange,
-					startDay.Date,
-					endDay.Date,
-					implication,
-				),
-			})
+			signals = append(signals, solarTrendSignal(startDay, endDay))
 		}
 	}
 	// No qualifying temperature or solar trend.
@@ -152,11 +85,11 @@ func outlookSignals(days []DailySummary) []Signal {
 // - At least 3 consecutive calendar days
 // - Valid measurements for every included day
 // - At least 2 actual day-to-day changes
-// - No movement against the requested direction
+// - No movement against the requested trendDirection
 // - Significant overall change
 //
 // Returns the start day, end day, and whether a trend was found.
-func trendPeriod(days []DailySummary, parsedDates []time.Time, getMeasurement func(DailySummary) (float64, bool), direction float64, isSignificantChange func(float64, float64) bool) (DailySummary, DailySummary, bool) {
+func trendPeriod(days []DailySummary, parsedDates []time.Time, getMeasurement func(DailySummary) (float64, bool), trendDirection float64, isSignificantChange func(float64, float64) bool) (DailySummary, DailySummary, bool) {
 	var bestStartDay DailySummary
 	var bestEndDay DailySummary
 
@@ -191,7 +124,7 @@ func trendPeriod(days []DailySummary, parsedDates []time.Time, getMeasurement fu
 			}
 
 			dailyChange := currentValue - previousValue
-			if direction*dailyChange < 0 {
+			if trendDirection*dailyChange < 0 {
 				break
 			}
 
@@ -217,4 +150,83 @@ func trendPeriod(days []DailySummary, parsedDates []time.Time, getMeasurement fu
 	}
 
 	return bestStartDay, bestEndDay, found
+}
+
+// temperatureTrendSignal generates a signal describing the temperature trend between two days of forecast data.
+
+func temperatureTrendSignal(startDay, endDay DailySummary) Signal {
+	startTemperature := *startDay.AvgTemperature
+	endTemperature := *endDay.AvgTemperature
+	temperatureChange := endTemperature - startTemperature
+
+	title := "Warming trend"
+	severity := "info"
+	implication := "The heating/cooling demand implication depends on local conditions."
+
+	switch {
+	case temperatureChange < 0 && endTemperature < heatingReference:
+		title = "Cold spell developing"
+		severity = "warning"
+		implication = "Colder conditions may increase heating-driven electricity demand."
+
+	case temperatureChange < 0 && startTemperature > coolingReference:
+		title = "Cooling trend"
+		severity = "warning"
+		implication = "Cooling-driven electricity demand conditions may ease."
+
+	case temperatureChange < 0:
+		title = "Cooling trend"
+		severity = "warning"
+
+	case temperatureChange > 0 && endTemperature > coolingReference:
+		implication = "Warmer conditions may increase cooling-driven electricity demand."
+
+	case temperatureChange > 0 && startTemperature < heatingReference:
+		implication = "Heating-driven electricity demand conditions may ease."
+	}
+
+	return Signal{
+		Kind:     "temperature",
+		Severity: severity,
+		Title:    title,
+		Detail: fmt.Sprintf(
+			"Daily average temperature changes by %+.1f°C from %s through %s across consecutive forecast days. %s",
+			temperatureChange,
+			startDay.Date,
+			endDay.Date,
+			implication,
+		),
+	}
+}
+
+// solarTrendSignal generates a signal describing the solar energy trend between two days of forecast data.
+
+func solarTrendSignal(startDay, endDay DailySummary) Signal {
+	startSolar := startDay.SolarEnergyKWhM2
+	endSolar := endDay.SolarEnergyKWhM2
+
+	solarChange := endSolar - startSolar
+
+	title := "Solar availability improving"
+	severity := "info"
+	implication := "Higher irradiance may improve conditions for solar PV generation."
+
+	if solarChange < 0 {
+		title = "Solar availability weakening"
+		severity = "warning"
+		implication = "Lower irradiance may weaken conditions for solar PV generation."
+	}
+
+	return Signal{
+		Kind:     "solar",
+		Severity: severity,
+		Title:    title,
+		Detail: fmt.Sprintf(
+			"The daily solar-energy proxy changes by %+.2f kWh/m² from %s through %s across consecutive forecast days. %s",
+			solarChange,
+			startDay.Date,
+			endDay.Date,
+			implication,
+		),
+	}
 }
