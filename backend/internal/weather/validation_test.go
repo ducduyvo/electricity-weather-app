@@ -35,7 +35,7 @@ func TestSummaryExcludesInvalidMeasurements(t *testing.T) {
 	if day.TemperatureSampleCount != 21 || day.SolarSampleCount != 21 || day.WindSampleCount != 21 {
 		t.Fatalf("invalid readings counted: %+v", day)
 	}
-	if *day.AvgTemperature != -5 || *day.MinTemperature != -5 || *day.MaxTemperature != -5 || day.SolarEnergyKWhM2 != 0 || *day.MeanWindSpeed != 5 {
+	if *day.AvgTemperature != -5 || *day.MinTemperature != -5 || *day.MaxTemperature != -5 || day.SolarEnergyKWhM2 != 0 || *day.AvgWindSpeed != 5 {
 		t.Fatal("invalid readings changed aggregates")
 	}
 	if completeTemperature(day) || completeSolar(day) {
@@ -50,12 +50,12 @@ func TestDailyInsightsRejectInvalidAggregates(t *testing.T) {
 		day.TemperatureSampleCount = 24
 		day.SolarSampleCount = 24
 		day.SolarEnergyKWhM2 = value
-		day.MeanWindSpeed = f(value)
+		day.AvgWindSpeed = f(value)
 		if completeTemperature(day) || completeSolar(day) {
 			t.Fatal("invalid aggregate marked complete")
 		}
-		if _, valid := windMean(day); valid {
-			t.Fatal("invalid wind mean accepted")
+		if _, valid := windAverage(day); valid {
+			t.Fatal("invalid wind average accepted")
 		}
 		day.PeakSolarIrradiance = f(value)
 		day.PeakSolarTime = "2026-10-10T12:00"

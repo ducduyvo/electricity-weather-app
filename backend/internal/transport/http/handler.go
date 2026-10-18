@@ -1,20 +1,21 @@
-package weather
+package weatherhttp
 
 import (
 	"net/http"
 	"strconv"
+	"weather-retailer/backend/internal/weather"
 )
 
 // Handler translates HTTP requests and responses; calculations belong to the provider.
-type Handler struct{ provider Provider }
+type Handler struct{ provider weather.Provider }
 
-func NewHandler(provider Provider) *Handler { return &Handler{provider: provider} }
+func NewHandler(provider weather.Provider) *Handler { return &Handler{provider: provider} }
 
 func (h *Handler) Weather(w http.ResponseWriter, r *http.Request) {
 	lat, latErr := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
 	lon, lonErr := strconv.ParseFloat(r.URL.Query().Get("lon"), 64)
-	if latErr != nil || lonErr != nil || Validate(lat, lon) != nil {
-		writeErrorResponse(w, r, ErrInvalidCoordinates)
+	if latErr != nil || lonErr != nil || weather.Validate(lat, lon) != nil {
+		writeErrorResponse(w, r, weather.ErrInvalidCoordinates)
 		return
 	}
 	forecast, err := h.provider.Forecast(r.Context(), lat, lon)

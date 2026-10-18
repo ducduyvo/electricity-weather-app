@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	weatherhttp "weather-retailer/backend/internal/transport/http"
 	"weather-retailer/backend/internal/weather"
 )
 
@@ -31,9 +32,9 @@ func run() error {
 	defer client.CloseIdleConnections()
 	upstream := weather.OpenMeteo{Client: client, BaseURL: cfg.OpenMeteoURL, WindInsights: &cfg.WindInsights}
 	provider := &weather.Cached{Next: upstream, TTL: cfg.CacheTTL}
-	handler := weather.NewHandler(provider)
+	handler := weatherhttp.NewHandler(provider)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/health", weather.Health)
+	mux.HandleFunc("GET /api/health", weatherhttp.Health)
 	mux.HandleFunc("GET /api/weather", handler.Weather)
 	server := &http.Server{
 		Addr:              cfg.Address,

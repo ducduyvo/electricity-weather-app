@@ -1,6 +1,7 @@
 package weather
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -243,6 +244,130 @@ func TestIncompleteTemperatureSuppressesComparisons(t *testing.T) {
 					}
 				}
 			})
+		}
+	}
+}
+
+func TestWindTrendSignalCodesAndParameters(t *testing.T) {
+	for _, tt := range []struct {
+		start, end     float64
+		code, severity string
+	}{
+		{start: 5, end: 8.27, code: "wind_speed_increasing", severity: "info"},
+		{start: 9.8, end: 2.1, code: "wind_speed_decreasing", severity: "warning"},
+	} {
+		signal := windTrendSignal("2026-10-12T16:00", "2026-10-13T21:00", tt.start, tt.end)
+		if signal.Code != tt.code || signal.Severity != tt.severity || signal.Params["change"] != tt.end-tt.start {
+			t.Fatalf("incorrect signal %+v", signal)
+		}
+		if len(signal.Params) != 3 || signal.Title == "" || !strings.Contains(signal.Detail, "Wind speed indicates generation conditions, not actual production.") {
+			t.Fatal("fallback or params changed")
+		}
+		body, err := json.Marshal(signal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded struct {
+			Code          string
+			Params        map[string]any
+			Title, Detail string
+		}
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Code != tt.code || decoded.Params["start"] != "2026-10-12T16:00" || decoded.Params["end"] != "2026-10-13T21:00" || decoded.Title != signal.Title || decoded.Detail != signal.Detail {
+			t.Fatal("JSON contract")
+		}
+	}
+	body, err := json.Marshal(Signal{Kind: "solar", Title: "Existing signal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), `"code"`) || strings.Contains(string(body), `"params"`) {
+		t.Fatal("optional fields emitted for legacy signals")
+	}
+}
+
+func TestTemperatureSolarCodesAndParameters(t *testing.T) {
+	for _, tt := range []struct {
+		delta, today, tomorrow float64
+		code, interpretation   string
+	}{
+		{delta: -4, today: 12, tomorrow: 8, code: "temperature_decreasing", interpretation: "heating_increase"},
+		{delta: -4, today: 26, tomorrow: 22, code: "temperature_decreasing", interpretation: "cooling_ease"},
+		{delta: -3, today: 22, tomorrow: 19, code: "temperature_decreasing", interpretation: "dependent"},
+		{delta: 4, today: 24, tomorrow: 28, code: "temperature_increasing", interpretation: "cooling_increase"},
+		{delta: 4, today: 12, tomorrow: 16, code: "temperature_increasing", interpretation: "heating_ease"},
+		{delta: 3, today: 18, tomorrow: 21, code: "temperature_increasing", interpretation: "dependent"},
+	} {
+		item := temperatureSignal(tt.delta, tt.today, tt.tomorrow)
+		if item == nil || item.Code != tt.code || item.Params["change"] != tt.delta || item.Params["interpretation"] != tt.interpretation {
+			t.Fatalf("temperature metadata %+v", item)
+		}
+		if tt.tomorrow == 28 && item.Severity != "warning" {
+			t.Fatal("heat severity changed")
+		}
+	}
+	start := DailySummary{Date: "2026-10-12", AvgTemperature: f(12), SolarEnergyKWhM2: 4}
+	end := DailySummary{Date: "2026-10-15", AvgTemperature: f(8), SolarEnergyKWhM2: 2}
+	for _, item := range []Signal{temperatureTrendSignal(start, end), solarTrendSignal(start, end)} {
+		if item.Code == "" || item.Params["start"] != start.Date || item.Params["end"] != end.Date {
+			t.Fatal("trend dates missing")
+		}
+		body, err := json.Marshal(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `"params"`) {
+			t.Fatal("metadata not serialized")
+		}
+	}
+	for _, strong := range []bool{false, true} {
+		peak := 400.0
+		code := "solar_peak"
+		if strong {
+			peak = 600
+			code = "solar_peak_strong"
+		}
+		item := solarPeakSignal(DailySummary{Date: start.Date, PeakSolarTime: start.Date + "T13:00", PeakSolarIrradiance: f(peak)})
+		if item == nil || item.Code != code || item.Params["partial"] != true || item.Params["time"] != "13:00" || item.Params["peak"] != peak {
+			t.Fatal("peak metadata")
+		}
+	}
+	for _, change := range []float64{-2, 2} {
+		days := trendDays([]float64{12, 12}, []float64{4, 4 + change})
+		found := false
+		for _, item := range signals(days) {
+			if item.Code == "solar_daily_decreasing" || item.Code == "solar_daily_increasing" {
+				found = true
+				if item.Params["change"] != change || item.Params["date"] != days[1].Date || item.Params["baseline"] != days[0].Date {
+					t.Fatal("daily solar metadata")
+				}
+			}
+		}
+		if !found {
+			t.Fatal("daily solar code missing")
+		}
+	}
+}
+
+func TestSolarPeakSignalTimeFormats(t *testing.T) {
+	for _, value := range []string{
+		"2026-10-14T12:00", "2026-10-14T12:00:00",
+		"2026-10-14T12:00:00+03:00", "2026-10-14T12:00+03:00",
+		"2026-10-14T12:00:00Z", "2026-10-14T12:00Z",
+		"2026-10-14T12:00:00.123+03:00", "12:00", "12:00:00",
+	} {
+		t.Run(value, func(t *testing.T) {
+			item := solarPeakSignal(DailySummary{Date: "2026-10-14", PeakSolarTime: value, PeakSolarIrradiance: f(600)})
+			if item == nil || item.Params["time"] != "12:00" {
+				t.Fatalf("valid local peak time rejected or shifted: %+v", item)
+			}
+		})
+	}
+	for _, value := range []string{"", "invalid", "25:00", "2026-10-14"} {
+		if item := solarPeakSignal(DailySummary{Date: "2026-10-14", PeakSolarTime: value, PeakSolarIrradiance: f(600)}); item != nil {
+			t.Fatalf("invalid peak time accepted: %q", value)
 		}
 	}
 }

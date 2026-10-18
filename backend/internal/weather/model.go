@@ -6,9 +6,10 @@ import (
 
 // Wind fields use 120 m forecasts; speed is m/s and direction is degrees.
 type Point struct {
+	UnixTime        *int64   `json:"unixTime,omitempty"`
 	WindSpeed       *float64 `json:"windSpeed"`
 	WindDirection   *float64 `json:"windDirection"`
-	WindPotential   *string  `json:"windPotential"`
+	WindPotential   *string  `json:"WindPotential"`
 	Time            string   `json:"time"`
 	Temperature     *float64 `json:"temperature"`
 	SolarIrradiance *float64 `json:"solarIrradiance"`
@@ -17,10 +18,10 @@ type Point struct {
 // Daily wind statistics use the same 120 m hourly measurements.
 type DailySummary struct {
 	WindDirectionConsistency float64  `json:"windDirectionConsistency"`
-	MeanWindDirection        *float64 `json:"meanWindDirection"`
+	AvgWindDirection         *float64 `json:"avgWindDirection"`
 	WindDirectionSampleCount int      `json:"windDirectionSampleCount"`
 	MinWindSpeed             *float64 `json:"minWindSpeed"`
-	MeanWindSpeed            *float64 `json:"meanWindSpeed"`
+	AvgWindSpeed             *float64 `json:"avgWindSpeed"`
 	MaxWindSpeed             *float64 `json:"maxWindSpeed"`
 	WindSampleCount          int      `json:"windSampleCount"`
 	Date                     string   `json:"date"`
@@ -33,14 +34,19 @@ type DailySummary struct {
 	SolarSampleCount         int      `json:"solarSampleCount"`
 	HourCount                int      `json:"hourCount"`
 	ExpectedHourCount        int      `json:"expectedHourCount"`
+	CompleteTemperature      bool     `json:"completeTemperature"`
+	CompleteWind             bool     `json:"completeWind"`
+	CompleteSolar            bool     `json:"completeSolar"`
 	CompleteDay              bool     `json:"completeDay"`
 	TemperatureSampleCount   int      `json:"temperatureSampleCount"`
 }
 type Signal struct {
-	Kind     string `json:"kind"`
-	Severity string `json:"severity"`
-	Title    string `json:"title"`
-	Detail   string `json:"detail"`
+	Code     string         `json:"code,omitempty"`
+	Params   map[string]any `json:"params,omitempty"`
+	Kind     string         `json:"kind"`
+	Severity string         `json:"severity"`
+	Title    string         `json:"title"`
+	Detail   string         `json:"detail"`
 }
 type Forecast struct {
 	Latitude       float64        `json:"latitude"`

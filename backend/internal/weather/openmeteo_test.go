@@ -16,12 +16,13 @@ func TestOpenMeteoMapping(t *testing.T) {
 			q.Get("latitude") != "60.1700" ||
 			q.Get("longitude") != "24.9400" ||
 			q.Get("hourly") != "temperature_2m,shortwave_radiation,wind_speed_120m,wind_direction_120m" ||
-			q.Get("forecast_days") != "14" ||
+			q.Get("forecast_days") != "15" ||
 			q.Get("timezone") != "auto" ||
+			q.Get("timeformat") != "unixtime" ||
 			q.Get("wind_speed_unit") != "ms" {
 			t.Error("unexpected upstream request", r.URL)
 		}
-		_, _ = w.Write([]byte(`{"latitude":60.17,"longitude":24.94,"timezone":"Europe/Helsinki","hourly":{"time":["2026-10-07T00:00","2026-10-07T01:00","2026-10-08T00:00"],"temperature_2m":[4,8,1],"shortwave_radiation":[0,500,250]}}`))
+		_, _ = w.Write([]byte(`{"latitude":60.17,"longitude":24.94,"timezone":"Europe/Helsinki","hourly":{"time":[1791320400,1791324000,1791406800],"temperature_2m":[4,8,1],"shortwave_radiation":[0,500,250]}}`))
 	}))
 	defer server.Close()
 	provider := OpenMeteo{Client: server.Client(), BaseURL: server.URL}
@@ -38,14 +39,14 @@ func TestOpenMeteoMapping(t *testing.T) {
 	if len(got.Hourly) != 3 || *got.Hourly[1].Temperature != 8 || *got.Hourly[1].SolarIrradiance != 500 {
 		t.Fatalf("bad hourly mapping: %+v", got.Hourly)
 	}
-	if len(got.Daily) != 2 || *got.Daily[0].AvgTemperature != 6 || got.Daily[0].SolarEnergyKWhM2 != 0.5 {
+	if len(got.Daily) != 2 || *got.Daily[0].AvgTemperature != 6 || got.Daily[0].SolarEnergyKWhM2 != 0.75 {
 		t.Fatalf("bad summary: %+v", got.Daily)
 	}
-	if len(got.Signals) != 2 ||
-		got.Signals[0].Title != "Solar period expected" ||
-		got.Signals[1].Title != "Limited comparison data" {
+
+	if len(got.Signals) != 1 || got.Signals[0].Title != "Limited comparison data" {
 		t.Fatalf("bad signals: %+v", got.Signals)
 	}
+
 }
 
 func TestOpenMeteoResponses(t *testing.T) {
@@ -56,8 +57,8 @@ func TestOpenMeteoResponses(t *testing.T) {
 	}{
 		{"non-200", 503, "unavailable", "status 503"},
 		{"malformed JSON", 200, "{", "decode Open-Meteo forecast"},
-		{"null and short arrays", 200, `{"hourly":{"time":["2026-10-07T00:00","2026-10-07T01:00"],"temperature_2m":[null],"shortwave_radiation":[null,500]}}`, ""},
-		{"missing arrays", 200, `{"hourly":{"time":["2026-10-07T00:00","2026-10-07T01:00"]}}`, ""},
+		{"null and short arrays", 200, `{"hourly":{"time":[1791331200,1791334800],"temperature_2m":[null],"shortwave_radiation":[null,500]}}`, ""},
+		{"missing arrays", 200, `{"hourly":{"time":[1791331200,1791334800]}}`, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -7,7 +7,7 @@ const apiURL = (
 export async function fetchForecast(
   lat: number,
   lon: number,
-  signal: AbortSignal
+  signal: AbortSignal,
 ): Promise<Forecast> {
   const response = await fetch(`${apiURL}/api/weather?lat=${lat}&lon=${lon}`, {
     signal,

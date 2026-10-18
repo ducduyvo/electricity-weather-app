@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 type cacheItem struct {
@@ -12,10 +14,11 @@ type cacheItem struct {
 	expires time.Time
 }
 type Cached struct {
-	Next Provider
-	TTL  time.Duration
-	mu   sync.Mutex
-	data map[string]cacheItem
+	Next  Provider
+	TTL   time.Duration
+	mu    sync.Mutex
+	data  map[string]cacheItem
+	loads singleflight.Group
 }
 
 func (c *Cached) Forecast(ctx context.Context, lat, lon float64) (Forecast, error) {
@@ -38,12 +41,34 @@ func (c *Cached) Forecast(ctx context.Context, lat, lon float64) (Forecast, erro
 		return v.f, nil
 	}
 	c.mu.Unlock()
-	f, e := c.Next.Forecast(ctx, lat, lon)
-	if e != nil {
-		return Forecast{}, e
+	result := c.loads.DoChan(key, func() (any, error) {
+		// Another load may have filled the cache since our initial lookup.
+		c.mu.Lock()
+		if v, ok := c.data[key]; ok && time.Now().Before(v.expires) {
+			c.mu.Unlock()
+			return v.f, nil
+		}
+		c.mu.Unlock()
+
+		// The shared fetch outlives individual callers, but remains bounded.
+		fetchCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		f, err := c.Next.Forecast(fetchCtx, lat, lon)
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		c.data[key] = cacheItem{f: f, expires: time.Now().Add(c.TTL)}
+		c.mu.Unlock()
+		return f, nil
+	})
+	select {
+	case <-ctx.Done():
+		return Forecast{}, ctx.Err()
+	case r := <-result:
+		if r.Err != nil {
+			return Forecast{}, r.Err
+		}
+		return r.Val.(Forecast), nil
 	}
-	c.mu.Lock()
-	c.data[key] = cacheItem{f: f, expires: time.Now().Add(c.TTL)}
-	c.mu.Unlock()
-	return f, nil
 }

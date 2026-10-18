@@ -159,33 +159,50 @@ func temperatureTrendSignal(startDay, endDay DailySummary) Signal {
 	endTemperature := *endDay.AvgTemperature
 	temperatureChange := endTemperature - startTemperature
 
+	trend := "warming"
+	interpretation := "local_dependent"
 	title := "Warming trend"
 	severity := "info"
 	implication := "The heating/cooling demand implication depends on local conditions."
 
 	switch {
 	case temperatureChange < 0 && endTemperature < heatingReference:
+		trend = "cold_spell"
 		title = "Cold spell developing"
 		severity = "warning"
 		implication = "Colder conditions may increase heating-driven electricity demand."
+		interpretation = "heating_increase"
 
 	case temperatureChange < 0 && startTemperature > coolingReference:
+		trend = "cooling"
 		title = "Cooling trend"
 		severity = "warning"
 		implication = "Cooling-driven electricity demand conditions may ease."
+		interpretation = "cooling_ease"
 
 	case temperatureChange < 0:
+		trend = "cooling"
 		title = "Cooling trend"
 		severity = "warning"
 
 	case temperatureChange > 0 && endTemperature > coolingReference:
 		implication = "Warmer conditions may increase cooling-driven electricity demand."
+		interpretation = "cooling_increase"
 
 	case temperatureChange > 0 && startTemperature < heatingReference:
 		implication = "Heating-driven electricity demand conditions may ease."
+		interpretation = "heating_ease"
 	}
 
 	return Signal{
+		Code: "temperature_trend",
+		Params: map[string]any{
+			"change":         temperatureChange,
+			"start":          startDay.Date,
+			"end":            endDay.Date,
+			"trend":          trend,
+			"interpretation": interpretation,
+		},
 		Kind:     "temperature",
 		Severity: severity,
 		Title:    title,
@@ -207,17 +224,25 @@ func solarTrendSignal(startDay, endDay DailySummary) Signal {
 
 	solarChange := endSolar - startSolar
 
+	code := "solar_trend_increasing"
 	title := "Solar availability improving"
 	severity := "info"
 	implication := "Higher irradiance may improve conditions for solar PV generation."
 
 	if solarChange < 0 {
+		code = "solar_trend_decreasing"
 		title = "Solar availability weakening"
 		severity = "warning"
 		implication = "Lower irradiance may weaken conditions for solar PV generation."
 	}
 
 	return Signal{
+		Code: code,
+		Params: map[string]any{
+			"change": solarChange,
+			"start":  startDay.Date,
+			"end":    endDay.Date,
+		},
 		Kind:     "solar",
 		Severity: severity,
 		Title:    title,

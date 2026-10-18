@@ -1,4 +1,4 @@
-package weather
+package weatherhttp
 
 import (
 	"context"
@@ -9,11 +9,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"weather-retailer/backend/internal/weather"
 )
 
-type fakeProvider func(context.Context, float64, float64) (Forecast, error)
+type fakeProvider func(context.Context, float64, float64) (weather.Forecast, error)
 
-func (p fakeProvider) Forecast(ctx context.Context, lat, lon float64) (Forecast, error) {
+func (p fakeProvider) Forecast(ctx context.Context, lat, lon float64) (weather.Forecast, error) {
 	return p(ctx, lat, lon)
 }
 
@@ -39,12 +40,12 @@ func TestHandlerWeather(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			called := false
-			handler := NewHandler(fakeProvider(func(ctx context.Context, lat, lon float64) (Forecast, error) {
+			handler := NewHandler(fakeProvider(func(ctx context.Context, lat, lon float64) (weather.Forecast, error) {
 				called = true
 				if tt.fail {
-					return Forecast{}, &ProviderError{Operation: "fetch forecast", Kind: ErrProviderUnavailable, Cause: errors.New("private upstream detail")}
+					return weather.Forecast{}, &weather.ProviderError{Operation: "fetch forecast", Kind: weather.ErrProviderUnavailable, Cause: errors.New("private upstream detail")}
 				}
-				return Forecast{
+				return weather.Forecast{
 					Latitude:  lat,
 					Longitude: lon,
 					Timezone:  "Europe/Helsinki",
@@ -59,7 +60,7 @@ func TestHandlerWeather(t *testing.T) {
 				t.Fatal("expected JSON content type")
 			}
 			if tt.status == 200 {
-				var got Forecast
+				var got weather.Forecast
 				if err := json.Unmarshal(recorder.Body.Bytes(), &got); err != nil {
 					t.Fatal(err)
 				}
@@ -91,23 +92,23 @@ func TestHandlerWeather(t *testing.T) {
 func TestHandlerPassesRequestContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	handler := NewHandler(fakeProvider(func(received context.Context, lat, lon float64) (Forecast, error) {
+	handler := NewHandler(fakeProvider(func(received context.Context, lat, lon float64) (weather.Forecast, error) {
 		if received != ctx {
 			t.Fatal("provider did not receive request context")
 		}
 		if lat != 60.17 || lon != 24.94 {
 			t.Fatal("wrong coordinates")
 		}
-		return Forecast{}, nil
+		return weather.Forecast{}, nil
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/api/weather?lat=60.17&lon=24.94", nil).WithContext(ctx)
 	handler.Weather(httptest.NewRecorder(), req)
 }
 
 func TestWeatherRouteRejectsPost(t *testing.T) {
-	handler := NewHandler(fakeProvider(func(context.Context, float64, float64) (Forecast, error) {
+	handler := NewHandler(fakeProvider(func(context.Context, float64, float64) (weather.Forecast, error) {
 		t.Fatal("provider called for POST")
-		return Forecast{}, nil
+		return weather.Forecast{}, nil
 	}))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/weather", handler.Weather)
@@ -123,12 +124,12 @@ func TestHandlerErrorCategories(t *testing.T) {
 		err    error
 		status int
 	}{
-		{ErrInvalidCoordinates, 400},
-		{fmt.Errorf("private wrapper: %w", ErrProviderUnavailable), 503}, {ErrInvalidLocation, 422}, {ErrProviderResponse, 502},
-		{ErrProviderUnavailable, 503}, {ErrProviderConfiguration, 500}, {errors.New("private details"), 500},
+		{weather.ErrInvalidCoordinates, 400},
+		{fmt.Errorf("private wrapper: %w", weather.ErrProviderUnavailable), 503}, {weather.ErrInvalidLocation, 422}, {weather.ErrProviderResponse, 502},
+		{weather.ErrProviderUnavailable, 503}, {weather.ErrProviderConfiguration, 500}, {errors.New("private details"), 500},
 	} {
-		handler := NewHandler(fakeProvider(func(context.Context, float64, float64) (Forecast, error) {
-			return Forecast{}, &ProviderError{Operation: "private operation", Kind: tt.err, Cause: errors.New("private cause")}
+		handler := NewHandler(fakeProvider(func(context.Context, float64, float64) (weather.Forecast, error) {
+			return weather.Forecast{}, &weather.ProviderError{Operation: "private operation", Kind: tt.err, Cause: errors.New("private cause")}
 		}))
 		recorder := httptest.NewRecorder()
 		handler.Weather(recorder, httptest.NewRequest("GET", "/api/weather?lat=60&lon=24", nil))

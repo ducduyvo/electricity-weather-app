@@ -26,7 +26,7 @@ func windDays(speeds ...float64) []DailySummary {
 	days := make([]DailySummary, len(speeds))
 	start := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
 	for i, speed := range speeds {
-		days[i] = DailySummary{Date: start.AddDate(0, 0, i).Format("2006-01-02"), CompleteDay: true, HourCount: 24, WindSampleCount: 24, MeanWindSpeed: f(speed), MaxWindSpeed: f(speed), WindDirectionSampleCount: 24, MeanWindDirection: f(45), WindDirectionConsistency: 1}
+		days[i] = DailySummary{Date: start.AddDate(0, 0, i).Format("2006-01-02"), CompleteDay: true, HourCount: 24, WindSampleCount: 24, AvgWindSpeed: f(speed), MaxWindSpeed: f(speed), WindDirectionSampleCount: 24, AvgWindDirection: f(45), WindDirectionConsistency: 1}
 	}
 	return days
 }
@@ -64,11 +64,11 @@ func TestWindPotentialBoundaries(t *testing.T) {
 
 func TestOpenMeteoWindMappingAndJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("hourly") != "temperature_2m,shortwave_radiation,wind_speed_120m,wind_direction_120m" || r.URL.Query().Get("wind_speed_unit") != "ms" || r.URL.Query().Get("forecast_days") != "14" {
+		if r.URL.Query().Get("hourly") != "temperature_2m,shortwave_radiation,wind_speed_120m,wind_direction_120m" || r.URL.Query().Get("wind_speed_unit") != "ms" || r.URL.Query().Get("forecast_days") != "15" {
 			t.Errorf("request %s", r.URL.RawQuery)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"timezone":"Europe/Helsinki","hourly":{"time":["2026-10-10T00:00","2026-10-10T01:00","2026-10-10T02:00","2026-10-10T03:00"],"temperature_2m":[10,11],"shortwave_radiation":[0,100],"wind_speed_120m":[0,12,null],"wind_direction_120m":[360,90,null]}}`))
+		_, _ = w.Write([]byte(`{"timezone":"Europe/Helsinki","hourly":{"time":[1791579600,1791583200,1791586800,1791590400],"temperature_2m":[10,11],"shortwave_radiation":[0,100],"wind_speed_120m":[0,12,null],"wind_direction_120m":[360,90,null]}}`))
 	}))
 	defer server.Close()
 	forecast, err := (OpenMeteo{Client: server.Client(), BaseURL: server.URL}).Forecast(context.Background(), 60, 24)
@@ -87,14 +87,14 @@ func TestOpenMeteoWindMappingAndJSON(t *testing.T) {
 		}
 	}
 	day := forecast.Daily[0]
-	if *day.MeanWindSpeed != 6 || *day.MinWindSpeed != 0 || *day.MaxWindSpeed != 12 || day.WindSampleCount != 2 || day.CompleteDay {
+	if *day.AvgWindSpeed != 6 || *day.MinWindSpeed != 0 || *day.MaxWindSpeed != 12 || day.WindSampleCount != 2 || day.CompleteDay {
 		t.Fatalf("summary %+v", day)
 	}
 	body, err := json.Marshal(forecast)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{`"windSpeed":0`, `"windDirection":360`, `"windPotential":"high"`, `"windSpeed":null`, `"windDirection":null`, `"windPotential":null`, `"meanWindSpeed":6`, `"minWindSpeed":0`, `"maxWindSpeed":12`, `"windSampleCount":2`} {
+	for _, field := range []string{`"windSpeed":0`, `"windDirection":360`, `"WindPotential":"high"`, `"windSpeed":null`, `"windDirection":null`, `"WindPotential":null`, `"avgWindSpeed":6`, `"minWindSpeed":0`, `"maxWindSpeed":12`, `"windSampleCount":2`} {
 		if !strings.Contains(string(body), field) {
 			t.Fatalf("missing JSON %s", field)
 		}
@@ -109,7 +109,7 @@ func TestMissingAndInvalidWind(t *testing.T) {
 	}
 	points := []Point{{Time: "2026-10-10T00:00"}, {Time: "2026-10-10T01:00", WindSpeed: f(-1)}}
 	day := summarize(points)[0]
-	if day.MeanWindSpeed != nil || day.MinWindSpeed != nil || day.MaxWindSpeed != nil || day.WindSampleCount != 0 {
+	if day.AvgWindSpeed != nil || day.MinWindSpeed != nil || day.MaxWindSpeed != nil || day.WindSampleCount != 0 {
 		t.Fatalf("missing wind became zero %+v", day)
 	}
 }
@@ -121,7 +121,7 @@ func TestWindSummaryFullDayAndDuplicate(t *testing.T) {
 	}
 	points = append(points, points[0])
 	day := summarize(points)[0]
-	if !day.CompleteDay || day.WindSampleCount != 24 || *day.MeanWindSpeed != 11.5 || *day.MinWindSpeed != 0 || *day.MaxWindSpeed != 23 {
+	if !day.CompleteDay || day.WindSampleCount != 24 || *day.AvgWindSpeed != 11.5 || *day.MinWindSpeed != 0 || *day.MaxWindSpeed != 23 {
 		t.Fatalf("wind coverage %+v", day)
 	}
 }
@@ -134,7 +134,7 @@ func TestWindSummaryMissingSamplesOnCompleteDay(t *testing.T) {
 	points[0].WindSpeed = f(0)
 	points[1].WindSpeed = nil
 	day := summarize(points, "Europe/Helsinki")[0]
-	if !day.CompleteDay || day.WindSampleCount != 23 || *day.MeanWindSpeed != 220.0/23 || *day.MinWindSpeed != 0 || *day.MaxWindSpeed != 10 {
+	if !day.CompleteDay || day.WindSampleCount != 23 || *day.AvgWindSpeed != 220.0/23 || *day.MinWindSpeed != 0 || *day.MaxWindSpeed != 10 {
 		t.Fatalf("missing sample treated as zero: %+v", day)
 	}
 }
@@ -146,7 +146,7 @@ func TestWindMinimumIgnoresMissingAndInvalidValues(t *testing.T) {
 	points[2].WindSpeed = f(7)
 	points[3].WindSpeed = f(5)
 	day := summarize(points)[0]
-	if *day.MinWindSpeed != 5 || *day.MaxWindSpeed != 7 || *day.MeanWindSpeed != 6 || day.WindSampleCount != 2 {
+	if *day.MinWindSpeed != 5 || *day.MaxWindSpeed != 7 || *day.AvgWindSpeed != 6 || day.WindSampleCount != 2 {
 		t.Fatalf("minimum fabricated: %+v", day)
 	}
 }
@@ -174,17 +174,17 @@ func TestDailyWindDirection(t *testing.T) {
 				t.Fatalf("count = %d, want %d", summary.WindDirectionSampleCount, tt.count)
 			}
 			if tt.want == nil {
-				if summary.MeanWindDirection != nil {
+				if summary.AvgWindDirection != nil {
 					t.Fatal("unavailable direction should be nil")
 				}
 				return
 			}
-			if summary.MeanWindDirection == nil {
+			if summary.AvgWindDirection == nil {
 				t.Fatal("missing direction")
 			}
-			difference := math.Abs(*summary.MeanWindDirection - *tt.want)
+			difference := math.Abs(*summary.AvgWindDirection - *tt.want)
 			if math.Min(difference, 360-difference) > 1e-8 {
-				t.Fatalf("direction = %v, want %v", *summary.MeanWindDirection, *tt.want)
+				t.Fatalf("direction = %v, want %v", *summary.AvgWindDirection, *tt.want)
 			}
 		})
 	}
@@ -224,7 +224,7 @@ func TestDailyWindTrends(t *testing.T) {
 		case "gap":
 			days[1].Date = "2026-10-14"
 		case "null":
-			days[1].MeanWindSpeed = nil
+			days[1].AvgWindSpeed = nil
 		}
 		if len(dailyWindInsights(days, cfg)) != 0 {
 			t.Fatalf("bridged %s", missing)
@@ -292,12 +292,12 @@ func TestWindDirectionConsistencyAndCircularDifference(t *testing.T) {
 		t.Fatal("angle wrap")
 	}
 	days := windDays(5, 5)
-	days[0].MeanWindDirection = f(350)
-	days[1].MeanWindDirection = f(10)
+	days[0].AvgWindDirection = f(350)
+	days[1].AvgWindDirection = f(10)
 	if len(dailyWindInsights(days, cfg)) != 0 {
 		t.Fatal("small wrapped shift")
 	}
-	days[1].MeanWindDirection = f(80)
+	days[1].AvgWindDirection = f(80)
 	if !hasWindTitle(dailyWindInsights(days, cfg), "Wind direction shift") {
 		t.Fatal("shift missing")
 	}
@@ -307,7 +307,7 @@ func TestWindDirectionConsistencyAndCircularDifference(t *testing.T) {
 		case "variable":
 			testDays[1].WindDirectionConsistency = 0.3
 		case "calm":
-			testDays[1].MeanWindSpeed = f(0)
+			testDays[1].AvgWindSpeed = f(0)
 		case "missing":
 			testDays[1].WindDirectionSampleCount = 23
 		}
@@ -376,7 +376,7 @@ func TestDailyWindConsistency(t *testing.T) {
 		points[i].WindDirection = f(float64(i%2) * 180)
 	}
 	day := summarize(points)[0]
-	if math.Abs(day.WindDirectionConsistency) > 1e-8 || day.MeanWindDirection != nil {
+	if math.Abs(day.WindDirectionConsistency) > 1e-8 || day.AvgWindDirection != nil {
 		t.Fatal(fmt.Sprintf("inconsistent direction %+v", day))
 	}
 }
@@ -384,11 +384,11 @@ func TestDailyWindConsistency(t *testing.T) {
 func TestWindInsightsOpenMeteoIntegration(t *testing.T) {
 	start := time.Now().UTC().Truncate(time.Hour)
 	points := windHours(9, 7, 6)
-	timestamps := make([]string, len(points))
+	timestamps := make([]int64, len(points))
 	speeds := make([]float64, len(points))
 	directions := make([]float64, len(points))
 	for i, p := range points {
-		timestamps[i] = start.Add(time.Duration(i) * time.Hour).Format("2006-01-02T15:04")
+		timestamps[i] = start.Add(time.Duration(i) * time.Hour).Unix()
 		speeds[i] = *p.WindSpeed
 		directions[i] = *p.WindDirection
 	}
@@ -465,8 +465,8 @@ func TestWindInsightsReportBothDatedTrendDirections(t *testing.T) {
 
 func TestWindShiftMessageIncludesCorrespondingNamesAndDates(t *testing.T) {
 	days := windDays(5, 5)
-	days[0].MeanWindDirection = f(45)
-	days[1].MeanWindDirection = f(135)
+	days[0].AvgWindDirection = f(45)
+	days[1].AvgWindDirection = f(135)
 	for _, item := range dailyWindInsights(days, DefaultWindInsightConfig()) {
 		if item.Title == "Wind direction shift" {
 			for _, part := range []string{"northeasterly (45°)", "southeasterly (135°)", days[0].Date, days[1].Date} {
@@ -478,4 +478,39 @@ func TestWindShiftMessageIncludesCorrespondingNamesAndDates(t *testing.T) {
 		}
 	}
 	t.Fatal("direction shift missing")
+}
+
+func TestAvgWindDirection(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		directions []float64
+		want       *float64
+	}{
+		{name: "missing"},
+		{name: "east", directions: []float64{90, 90}, want: f(90)},
+		{name: "north wraparound", directions: []float64{350, 10}, want: f(0)},
+		{name: "opposing", directions: []float64{0, 180}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var sinSum, cosSum float64
+			for _, direction := range tt.directions {
+				radians := direction * math.Pi / 180
+				sinSum += math.Sin(radians)
+				cosSum += math.Cos(radians)
+			}
+			average, consistency := avgWindDirection(sinSum, cosSum, len(tt.directions))
+			if tt.want == nil {
+				if average != nil || consistency > 1e-6 {
+					t.Fatalf("unexpected average %v, consistency %v", average, consistency)
+				}
+				return
+			}
+			if average == nil || angleDifference(*average, *tt.want) > 1e-8 {
+				t.Fatalf("average %v, want %v", average, *tt.want)
+			}
+			if consistency < 0.98 || consistency > 1+1e-12 {
+				t.Fatalf("unexpected consistency %v", consistency)
+			}
+		})
+	}
 }

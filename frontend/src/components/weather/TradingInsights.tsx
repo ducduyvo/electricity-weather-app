@@ -1,12 +1,19 @@
 import Alert from "@mui/material/Alert";
 import Typography from "@mui/material/Typography";
-import { translateSignalText } from "../../i18n/signals";
+import { translateSignal } from "../../i18n/signals";
 import { useI18n } from "../../i18n";
 import type { ForecastView, WeatherSignal } from "../../types/weather";
 import { Panel } from "../common/Surface";
 
-export function TradingInsights({ view, itemsForView, }: { view: ForecastView; itemsForView?: WeatherSignal[]; }) {
+export function TradingInsights({
+  view,
+  itemsForView,
+}: {
+  view: ForecastView;
+  itemsForView?: WeatherSignal[];
+}) {
   const { t, locale } = useI18n();
+  if (!itemsForView?.length) return null;
   return (
     <Panel className="signals">
       <Typography component="h2" variant="h2">
@@ -28,18 +35,29 @@ export function TradingInsights({ view, itemsForView, }: { view: ForecastView; i
         },
       ].map((group) => {
         const items = (itemsForView ?? []).filter((signal) =>
-          group.kinds.includes(signal.kind)
+          group.kinds.includes(signal.kind),
         );
         if (items.length === 0) return null;
         return (
-          <div className="insight-group" key={group.title}>
-            <Typography component="h3" variant="h3">{group.title}</Typography>
-            {items.map((signal) => (
-                <Alert icon={false} severity={signal.severity === "warning" ? "warning" : signal.severity === "normal" ? "success" : "info"} className={"signal " + signal.severity} key={translateSignalText(signal.title, t, locale)}>
-                  <b>{translateSignalText(signal.title, t, locale)}</b>
-                  <span>{translateSignalText(signal.detail, t, locale)}</span>
+          <div className="insight-group" key={group.kinds.join("-")}>
+            <Typography component="h3" variant="h3">
+              {group.title}
+            </Typography>
+            {items.map((signal, index) => {
+              const { title, detail } = translateSignal(signal, t, locale);
+              const severity = signal.severity === "warning" ? "warning" : "info";
+              return (
+                <Alert
+                  icon={false}
+                  severity={severity}
+                  className={"signal " + severity}
+                  key={`${signal.kind}-${signal.title}-${signal.detail}-${index}`}
+                >
+                  <b>{title}</b>
+                  <span>{detail}</span>
                 </Alert>
-            ))}
+              );
+            })}
           </div>
         );
       })}

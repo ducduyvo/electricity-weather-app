@@ -37,10 +37,10 @@ type windWindow struct {
 	startTimestamp string
 	endTimestamp   string
 	startTime      time.Time
-	meanSpeed      float64
+	avgSpeed       float64
 	maxSpeed       float64
-	meanDirection  *float64
-	consistency    float64
+	avgDirection   *float64
+	consistency    float64 // Ratio of valid wind-direction samples to total samples, not a directional measure.
 	temp           *float64
 	solar          *float64
 }
@@ -55,8 +55,8 @@ func dailyWindInsights(days []DailySummary, cfg WindInsightConfig) []Signal {
 	}
 
 	measurement := func(day DailySummary) (float64, bool) {
-		meanSpeed, valid := windMean(day)
-		return meanSpeed, valid && day.MaxWindSpeed != nil && *day.MaxWindSpeed <= cfg.StrongSpeed
+		avgSpeed, valid := windAverage(day)
+		return avgSpeed, valid && day.MaxWindSpeed != nil && *day.MaxWindSpeed <= cfg.StrongSpeed
 	}
 
 	var out []Signal
@@ -64,29 +64,29 @@ func dailyWindInsights(days []DailySummary, cfg WindInsightConfig) []Signal {
 	for _, trendDirection := range []float64{decreasingTrend, increasingTrend} {
 		startDay, endDay, found := trendPeriod(days, dates, measurement, trendDirection, func(a, b float64) bool { return trendDirection*(b-a) >= cfg.SpeedChange })
 		if found {
-			out = append(out, windTrendSignal(startDay.Date, endDay.Date, *startDay.MeanWindSpeed, *endDay.MeanWindSpeed))
+			out = append(out, windTrendSignal(startDay.Date, endDay.Date, *startDay.AvgWindSpeed, *endDay.AvgWindSpeed))
 		}
 	}
 
 	windows := make([]windWindow, len(days))
 	for i, day := range days {
-		speed, valid := windMean(day)
+		speed, valid := windAverage(day)
 		windows[i] = windWindow{
 			startTimestamp: day.Date,
 			endTimestamp:   day.Date,
 			startTime:      dates[i],
-			meanSpeed:      math.NaN(),
+			avgSpeed:       math.NaN(),
 		}
 		if !valid || dates[i].IsZero() {
 			continue
 		}
-		windows[i].meanSpeed = speed
-		windows[i].meanDirection = day.MeanWindDirection
+		windows[i].avgSpeed = speed
+		windows[i].avgDirection = day.AvgWindDirection
 		// WindDirectionConsistency is a ratio of valid wind-direction samples to total samples, not a directional measure.
 		// 1 indicates all valid samples are mostly from the same direction, 0 indicates directions vary widely or cancel each other out.
 		windows[i].consistency = day.WindDirectionConsistency
 		if day.WindDirectionSampleCount != day.HourCount {
-			windows[i].meanDirection = nil
+			windows[i].avgDirection = nil
 		}
 		if completeTemperature(day) {
 			windows[i].temp = day.AvgTemperature
@@ -114,22 +114,23 @@ func hourlyWindInsights(points []Point, timezone string, now time.Time, cfg Wind
 	localNow := now.In(location)
 
 	forecastStart := now.Add(-time.Duration(localNow.Minute())*time.Minute - time.Duration(localNow.Second())*time.Second - time.Duration(localNow.Nanosecond()))
-	end := forecastStart.Add(72 * time.Hour)
+	forecastEnd := forecastStart.Add(72 * time.Hour)
 
 	var windows []windWindow
 	var block []Point
 	var previous time.Time
+	var blockStart time.Time
 
 	resetBlock := func() { block = nil }
 
 	for _, point := range points {
-		timestamp, err := time.ParseInLocation("2006-01-02T15:04", point.Time, location)
+		timestamp, err := forecastPointTime(point, location)
 		if err != nil {
 			resetBlock()
 			previous = time.Time{}
 			continue
 		}
-		if timestamp.Before(forecastStart) || !timestamp.Before(end) {
+		if timestamp.Before(forecastStart) || !timestamp.Before(forecastEnd) {
 			continue
 		}
 		if validWindValue(point.WindSpeed, false) == nil {
@@ -141,13 +142,16 @@ func hourlyWindInsights(points []Point, timezone string, now time.Time, cfg Wind
 			resetBlock()
 		}
 		previous = timestamp
+		if len(block) == 0 {
+			blockStart = timestamp
+		}
 		block = append(block, point)
 
 		if len(block) != windWindowHours {
 			continue
 		}
 
-		start, _ := time.ParseInLocation("2006-01-02T15:04", block[0].Time, location)
+		start := blockStart
 		w := windWindow{
 			startTimestamp: block[0].Time,
 			endTimestamp:   block[len(block)-1].Time,
@@ -158,7 +162,7 @@ func hourlyWindInsights(points []Point, timezone string, now time.Time, cfg Wind
 		directions, temps, solars := 0, 0, 0
 
 		for _, p := range block {
-			w.meanSpeed += *p.WindSpeed / float64(windWindowHours)
+			w.avgSpeed += *p.WindSpeed / float64(windWindowHours)
 			w.maxSpeed = math.Max(w.maxSpeed, *p.WindSpeed)
 			if d := validWindValue(p.WindDirection, true); d != nil && *p.WindSpeed > 0 {
 				sinSum += math.Sin(*d * math.Pi / 180)
@@ -166,20 +170,17 @@ func hourlyWindInsights(points []Point, timezone string, now time.Time, cfg Wind
 				directions++
 			}
 			if validTemperature(p.Temperature) {
-				temp += *p.Temperature / windWindowHours
+				temp += *p.Temperature / float64(windWindowHours)
 				temps++
 			}
 			if validSolarIrradiance(p.SolarIrradiance) {
-				solar += *p.SolarIrradiance / windWindowHours
+				solar += *p.SolarIrradiance / float64(windWindowHours)
 				solars++
 			}
 		}
 
 		if directions == windWindowHours {
-			d := math.Mod(math.Atan2(sinSum, cosSum)*180/math.Pi+360, 360)
-			w.meanDirection = &d
-			length := math.Hypot(sinSum, cosSum)
-			w.consistency = length / windWindowHours
+			w.avgDirection, w.consistency = avgWindDirection(sinSum, cosSum, directions)
 		}
 		if temps == windWindowHours {
 			w.temp = &temp
@@ -190,37 +191,40 @@ func hourlyWindInsights(points []Point, timezone string, now time.Time, cfg Wind
 		windows = append(windows, w)
 		resetBlock()
 	}
+
 	var out []Signal
+
 	for _, trendDirection := range []float64{decreasingTrend, increasingTrend} {
-		bestChange := 0.0
+		bestEffectiveChange := 0.0
 		var bestStart, bestEnd windWindow
 		for i, start := range windows {
 			if start.maxSpeed > cfg.StrongSpeed {
 				continue
 			}
-			changes := 0
+			speedChangeCount := 0
 			for j := i + 1; j < len(windows); j++ {
 				current, prev := windows[j], windows[j-1]
 				if current.startTime.Sub(prev.startTime) != windWindowDuration || current.maxSpeed > cfg.StrongSpeed {
 					break
 				}
-				delta := current.meanSpeed - prev.meanSpeed
+				delta := current.avgSpeed - prev.avgSpeed
 				if trendDirection*delta < 0 {
 					break
 				}
 				if delta != 0 {
-					changes++
+					speedChangeCount++
 				}
-				change := current.meanSpeed - start.meanSpeed
-				if j-i >= 2 && changes >= 2 && math.Abs(change) >= cfg.SpeedChange && math.Abs(change) > math.Abs(bestChange) {
-					bestChange = change
+				totalSpeedChange := current.avgSpeed - start.avgSpeed
+				effectiveChange := trendDirection * totalSpeedChange
+				if speedChangeCount >= 2 && effectiveChange >= cfg.SpeedChange && effectiveChange > bestEffectiveChange {
+					bestEffectiveChange = effectiveChange
 					bestStart = start
 					bestEnd = current
 				}
 			}
 		}
-		if bestChange != 0 {
-			out = append(out, windTrendSignal(bestStart.startTimestamp, bestEnd.endTimestamp, bestStart.meanSpeed, bestEnd.meanSpeed))
+		if bestEffectiveChange > 0 {
+			out = append(out, windTrendSignal(bestStart.startTimestamp, bestEnd.endTimestamp, bestStart.avgSpeed, bestEnd.avgSpeed))
 		}
 	}
 
@@ -237,7 +241,7 @@ func windPeriodInsights(windows []windWindow, windowInterval time.Duration, minL
 
 	// Find the longest consecutive low-wind period.
 	for i, w := range windows {
-		isLowWind := !(math.IsNaN(w.meanSpeed) || w.meanSpeed >= cfg.LowSpeed || w.maxSpeed >= cfg.LowSpeed)
+		isLowWind := !(math.IsNaN(w.avgSpeed) || w.avgSpeed >= cfg.LowSpeed || w.maxSpeed >= cfg.LowSpeed)
 		isContinuous := i > 0 && w.startTime.Sub(windows[i-1].startTime) == windowInterval
 		if !isLowWind {
 			currentLowWindWindowCount = 0
@@ -268,7 +272,7 @@ func windPeriodInsights(windows []windWindow, windowInterval time.Duration, minL
 			Severity: "warning",
 			Title:    "Prolonged low-wind period",
 			Detail: fmt.Sprintf(
-				"Mean wind at 120 m remains below %.1f m/s for %d forecast %s from %s through %s. "+
+				"Average wind at 120 m remains below %.1f m/s for %d forecast %s from %s through %s. "+
 					"Low wind may limit favorable wind generation conditions.",
 				cfg.LowSpeed,
 				duration,
@@ -297,7 +301,7 @@ func windPeriodInsights(windows []windWindow, windowInterval time.Duration, minL
 				Severity: "warning",
 				Title:    "Cold, low-solar and low-wind conditions",
 				Detail: fmt.Sprintf(
-					"From %s through %s, mean temperature falls from %.1f to %.1f°C alongside low solar availability and mean wind below %.1f m/s. "+
+					"From %s through %s, average temperature falls from %.1f to %.1f°C alongside low solar availability and average wind below %.1f m/s. "+
 						"Heating-related demand may rise while renewable generation conditions weaken; actual demand, production and prices are not predicted.",
 					startWindow.startTimestamp,
 					endWindow.endTimestamp,
@@ -316,24 +320,24 @@ func windPeriodInsights(windows []windWindow, windowInterval time.Duration, minL
 		if curr.startTime.Sub(prev.startTime) != windowInterval {
 			continue
 		}
-		if prev.meanDirection == nil || curr.meanDirection == nil {
+		if prev.avgDirection == nil || curr.avgDirection == nil {
 			continue
 		}
-		if math.IsNaN(prev.meanSpeed) || math.IsNaN(curr.meanSpeed) || prev.meanSpeed < cfg.LowSpeed || curr.meanSpeed < cfg.LowSpeed {
+		if math.IsNaN(prev.avgSpeed) || math.IsNaN(curr.avgSpeed) || prev.avgSpeed < cfg.LowSpeed || curr.avgSpeed < cfg.LowSpeed {
 			continue
 		}
 		if prev.consistency < cfg.DirectionConsistency || curr.consistency < cfg.DirectionConsistency {
 			continue
 		}
-		shift := angleDifference(*prev.meanDirection, *curr.meanDirection)
+		shift := angleDifference(*prev.avgDirection, *curr.avgDirection)
 		if shift >= cfg.DirectionChange && shift > bestShift {
 			bestShift = shift
 			shiftStart, shiftEnd = prev, curr
 		}
 	}
 	if bestShift > 0 {
-		prevDirection := *shiftStart.meanDirection
-		currDirection := *shiftEnd.meanDirection
+		prevDirection := *shiftStart.avgDirection
+		currDirection := *shiftEnd.avgDirection
 
 		prevDirectionName := windDirectionName(prevDirection)
 		currDirectionName := windDirectionName(currDirection)
@@ -399,21 +403,29 @@ func windPotential(speed *float64) *string {
 	return &potential
 }
 
-// windTrendSignal returns a signal for a sustained change in mean wind speed.
+// windTrendSignal returns a signal for a sustained change in average wind speed.
 func windTrendSignal(start, end string, startSpeed, endSpeed float64) Signal {
+	code := "wind_speed_increasing"
 	title, severity := "Wind conditions improving", "info"
 	implication := "Increasing wind speeds may improve conditions for wind power generation."
 
 	if endSpeed < startSpeed {
+		code = "wind_speed_decreasing"
 		title, severity = "Wind conditions weakening", "warning"
 		implication = "Decreasing wind speeds may reduce favorable conditions for wind power generation."
 	}
 	return Signal{
+		Code: code,
+		Params: map[string]any{
+			"change": endSpeed - startSpeed,
+			"start":  start,
+			"end":    end,
+		},
 		Kind:     "wind",
 		Severity: severity,
 		Title:    title,
 		Detail: fmt.Sprintf(
-			"Mean wind at 120 m changes by %+.1f m/s from %s through %s across sustained forecast periods. %s "+
+			"Average wind at 120 m changes by %+.1f m/s from %s through %s across sustained forecast periods. %s "+
 				"Wind speed indicates generation conditions, not actual production.",
 			endSpeed-startSpeed,
 			start,

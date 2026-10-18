@@ -28,8 +28,9 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 		hourCount, solarSampleCount int
 		peakIrradiance              *float64
 		peakTime                    string
-		expectedSlots               map[string]int
-		seenSlots                   map[string]int
+		expectedHourlySlots         map[int64]struct{}
+		observedHourlySlots         map[int64]struct{}
+		observedSolarSlots          map[int64]struct{}
 		expectedHourCount           int
 	}
 
@@ -37,8 +38,7 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 	dates := []string{}
 
 	for _, point := range points {
-		timestamp, err := time.ParseInLocation("2006-01-02T15:04", point.Time, location)
-
+		timestamp, err := forecastPointTime(point, location)
 		if err != nil {
 			continue
 		}
@@ -50,24 +50,27 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 			dayStart, _ := time.ParseInLocation("2006-01-02", date, location)
 			dayEnd := dayStart.AddDate(0, 0, 1)
 			agg = &dailyAgg{
-				expectedSlots:     make(map[string]int),
-				seenSlots:         make(map[string]int),
-				expectedHourCount: int(dayEnd.Sub(dayStart) / time.Hour),
+				expectedHourlySlots: make(map[int64]struct{}),
+				observedHourlySlots: make(map[int64]struct{}),
+				observedSolarSlots:  make(map[int64]struct{}),
+				expectedHourCount:   int(dayEnd.Sub(dayStart) / time.Hour),
 			}
 			// The repeated wall-clock hour on a DST fall-back day has two slots.
 			for hour := dayStart; hour.Before(dayEnd); hour = hour.Add(time.Hour) {
-				agg.expectedSlots[hour.Format("2006-01-02T15:04")]++
+				agg.expectedHourlySlots[hour.Unix()] = struct{}{}
 			}
 			aggByDate[date] = agg
 			dates = append(dates, date)
 		}
-		// Count each expected local-hour slot once (twice for a repeated DST hour).
-		// Duplicates and timestamps outside the hourly grid cannot fill missing hours.
-		if agg.seenSlots[point.Time] >= agg.expectedSlots[point.Time] {
+		// Accept each exact hourly instant once, including distinct repeated DST hours.
+		slotKey := timestamp.Unix()
+		if _, expected := agg.expectedHourlySlots[slotKey]; !expected {
 			continue
 		}
-
-		agg.seenSlots[point.Time]++
+		if _, observed := agg.observedHourlySlots[slotKey]; observed {
+			continue
+		}
+		agg.observedHourlySlots[slotKey] = struct{}{}
 		agg.hourCount++
 
 		if speed := validWindValue(point.WindSpeed, false); speed != nil {
@@ -79,7 +82,7 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 				agg.maxWind = *speed
 			}
 			agg.windCount++
-			// Equal-weight circular mean of wind-from bearings; calm winds have no direction.
+			// Equal-weight circular average of wind-from bearings; calm winds have no direction.
 			if direction := validWindValue(point.WindDirection, true); direction != nil && *speed > 0 {
 				radians := *direction * math.Pi / 180
 				agg.directionSin += math.Sin(radians)
@@ -100,14 +103,37 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 			agg.tempSampleCount++
 		}
 
-		if validSolarIrradiance(point.SolarIrradiance) {
-			irradiance := *point.SolarIrradiance
-			agg.solarSampleCount++
-			agg.solarEnergy += irradiance / 1000
-			if agg.peakIrradiance == nil || irradiance > *agg.peakIrradiance {
-				agg.peakIrradiance = &irradiance
-				agg.peakTime = point.Time
-			}
+	}
+
+	// Radiation is the mean of the preceding hour. Assign its energy to
+	// that interval's local day, independently of instantaneous measurements.
+	for _, point := range points {
+		end, err := forecastPointTime(point, location)
+		if err != nil {
+			continue
+		}
+		start := end.Add(-time.Hour)
+		agg := aggByDate[start.Format("2006-01-02")]
+		if agg == nil {
+			continue
+		}
+		slotKey := start.Unix()
+		if _, expected := agg.expectedHourlySlots[slotKey]; !expected {
+			continue
+		}
+		if _, observed := agg.observedSolarSlots[slotKey]; observed {
+			continue
+		}
+		if !validSolarIrradiance(point.SolarIrradiance) {
+			continue
+		}
+		agg.observedSolarSlots[slotKey] = struct{}{}
+		irradiance := *point.SolarIrradiance
+		agg.solarSampleCount++
+		agg.solarEnergy += irradiance / 1000
+		if agg.peakIrradiance == nil || irradiance > *agg.peakIrradiance {
+			agg.peakIrradiance = &irradiance
+			agg.peakTime = point.Time
 		}
 	}
 
@@ -127,22 +153,22 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 			HourCount:                agg.hourCount,
 			ExpectedHourCount:        agg.expectedHourCount,
 			CompleteDay:              agg.hourCount == agg.expectedHourCount,
+			CompleteTemperature:      agg.expectedHourCount > 0 && agg.tempSampleCount == agg.expectedHourCount,
+			CompleteWind:             agg.expectedHourCount > 0 && agg.windCount == agg.expectedHourCount,
+			CompleteSolar:            agg.expectedHourCount > 0 && agg.solarSampleCount == agg.expectedHourCount,
 			TemperatureSampleCount:   agg.tempSampleCount,
 		}
-		if agg.directionCount > 0 {
-			summary.WindDirectionConsistency = math.Hypot(agg.directionSin, agg.directionCos) / float64(agg.directionCount)
-		}
-		// Opposing bearings can cancel: do not invent a direction for an ambiguous mean.
-		if agg.directionCount > 0 && math.Hypot(agg.directionSin, agg.directionCos)/float64(agg.directionCount) > 1e-6 {
-			direction := math.Mod(math.Atan2(agg.directionSin, agg.directionCos)*180/math.Pi+360, 360)
-			summary.MeanWindDirection = &direction
-		}
+		summary.AvgWindDirection, summary.WindDirectionConsistency = avgWindDirection(
+			agg.directionSin,
+			agg.directionCos,
+			agg.directionCount,
+		)
 		if agg.windCount > 0 {
 			avgWind := agg.windSum / float64(agg.windCount)
 			minWind := agg.minWind
 			maxWind := agg.maxWind
 			summary.MinWindSpeed = &minWind
-			summary.MeanWindSpeed = &avgWind
+			summary.AvgWindSpeed = &avgWind
 			summary.MaxWindSpeed = &maxWind
 		}
 		if agg.tempSampleCount > 0 {

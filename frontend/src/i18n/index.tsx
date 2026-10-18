@@ -1,4 +1,10 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import english from "./locales/en/weather.json";
 import finnish from "./locales/fi/weather.json";
 
@@ -14,19 +20,35 @@ type I18n = {
 const Context = createContext<I18n | null>(null);
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocale] = useState<Locale>(() => {
-    try { return localStorage.getItem("weather-locale") === "fi" ? "fi" : "en"; }
-    catch { return "en"; }
+    try {
+      return localStorage.getItem("weather-locale") === "fi" ? "fi" : "en";
+    } catch {
+      return "en";
+    }
   });
   useEffect(() => {
     document.documentElement.lang = locale;
     document.title = (locale === "fi" ? fi : en)["app_title"];
-    try { localStorage.setItem("weather-locale", locale); } catch { /* Storage may be disabled. */ }
+    try {
+      localStorage.setItem("weather-locale", locale);
+    } catch {
+      /* Storage may be disabled. */
+    }
   }, [locale]);
   const t: I18n["t"] = (key, values = {}) => {
-    const text = (locale === "fi" ? fi : en)[key.slice("weather.".length) as keyof typeof en] ?? key;
-    return text.replace(/\{(\w+)\}/g, (placeholder, name: string) => String(values[name] ?? placeholder));
+    const text =
+      (locale === "fi" ? fi : en)[
+        key.slice("weather.".length) as keyof typeof en
+      ] ?? key;
+    return text.replace(/\{(\w+)\}/g, (placeholder, name: string) =>
+      String(values[name] ?? placeholder),
+    );
   };
-  return <Context.Provider value={{ locale, setLocale, t }}>{children}</Context.Provider>;
+  return (
+    <Context.Provider value={{ locale, setLocale, t }}>
+      {children}
+    </Context.Provider>
+  );
 }
 export function useI18n() {
   const value = useContext(Context);

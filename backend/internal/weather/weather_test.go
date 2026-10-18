@@ -1,6 +1,8 @@
 package weather
 
-import "testing"
+import (
+	"testing"
+)
 
 func f(v float64) *float64 { return &v }
 func TestSummarize(t *testing.T) {
@@ -71,14 +73,14 @@ func TestSummarizeValues(t *testing.T) {
 		*first.MaxTemperature != 8 {
 		t.Fatalf("temperature summary %+v", first)
 	}
-	if first.SolarEnergyKWhM2 != 0.6 {
+	if first.SolarEnergyKWhM2 != 0.7 {
 		t.Fatalf("solar energy %v", first.SolarEnergyKWhM2)
 	}
 	second := got[1]
 	if second.AvgTemperature != nil ||
 		second.MinTemperature != nil ||
 		second.MaxTemperature != nil ||
-		second.SolarEnergyKWhM2 != 0.2 {
+		second.SolarEnergyKWhM2 != 0 {
 		t.Fatalf("missing temperatures %+v", second)
 	}
 }
@@ -93,8 +95,8 @@ func TestSignalsThresholds(t *testing.T) {
 		{"warmer boundary", 13, 4, "Warmer tomorrow", "temperature", "info"},
 		{"lower solar boundary", 10, 3, "Lower solar availability", "solar", "warning"},
 		{"higher solar boundary", 10, 5, "Higher solar availability", "solar", "info"},
-		{"stable", 10, 4, "Stable weather outlook", "weather", "normal"},
-		{"below thresholds", 12.9, 4.49, "Stable weather outlook", "weather", "normal"},
+		{"stable", 10, 4, "Stable weather outlook", "weather", "info"},
+		{"below thresholds", 12.9, 4.49, "Stable weather outlook", "weather", "info"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

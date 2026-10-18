@@ -1,4 +1,6 @@
 import Select from "@mui/material/Select";
+import FormControl from "@mui/material/FormControl";
+import InputLabel from "@mui/material/InputLabel";
 import MenuItem from "@mui/material/MenuItem";
 import Alert from "@mui/material/Alert";
 import Typography from "@mui/material/Typography";
@@ -6,11 +8,18 @@ import { useI18n, type TranslationKey } from "./i18n";
 import { useEffect, useState } from "react";
 import type { Forecast, ForecastView } from "./types/weather";
 import { fetchForecast } from "./services/weather";
-import { currentLocalHour, localDateLabel } from "./utils/forecastTime";
+import { dailyChartValues } from "./utils/dailyForecast";
+import {
+  currentLocalHour,
+  localDateLabel,
+  currentForecastHour,
+  hourlyPointLabel,
+} from "./utils/forecastTime";
 import {
   ApplicationShell,
   ForecastSwitch,
   LoadingState,
+  EmptyForecastState,
   Button,
 } from "./components/common/Workspace";
 import { DailyCards } from "./components/weather/DailyCards";
@@ -52,18 +61,32 @@ export default function App() {
     return () => controller.abort();
   }, [city, retry]);
   const cutoff = data ? currentLocalHour(data.timezone || "UTC") : "";
+  const instantCutoff = data ? currentForecastHour(data.timezone || "UTC") : 0;
+  const timeOccurrences = new Map<string, number>();
+  for (const point of data?.hourly ?? [])
+    timeOccurrences.set(point.time, (timeOccurrences.get(point.time) ?? 0) + 1);
   const chart = data?.hourly
-    .filter((point) => point.time >= cutoff)
+    .filter((point) =>
+      point.unixTime != null
+        ? point.unixTime >= instantCutoff
+        : point.time >= cutoff,
+    )
     .slice(0, 72)
-    .map((point) => ({ ...point, label: localDateLabel(point.time, true, locale) }));
+    .map((point) => ({
+      ...point,
+      label:
+        point.unixTime != null
+          ? hourlyPointLabel(
+              point.unixTime,
+              data!.timezone || "UTC",
+              locale,
+              (timeOccurrences.get(point.time) ?? 0) > 1,
+            )
+          : localDateLabel(point.time, true, locale),
+    }));
   const dailyChart = data?.daily.slice(0, 14).map((day) => ({
-    ...day,
+    ...dailyChartValues(day),
     label: localDateLabel(day.date, false, locale),
-    // Use the backend completeness flag; never plot missing/partial energy as zero.
-    solarEnergy:
-      day.completeDay && day.solarSampleCount === day.hourCount
-        ? day.solarEnergyKWhM2
-        : null,
   }));
   const activeSignals =
     view === "hourly" ? data?.signals : data?.outlookSignals;
@@ -73,13 +96,23 @@ export default function App() {
         <header className="page-header">
           <div>
             <span className="eyebrow">{t("weather.page_eyebrow")}</span>
-            <Typography component="h1" variant="h1">{t("weather.app_title")}</Typography>
+            <Typography component="h1" variant="h1">
+              {t("weather.app_title")}
+            </Typography>
             <p>{t("weather.page_description")}</p>
           </div>
-          <label className="city-control">
-            <span>{t("weather.forecast_location")}</span>
+          <FormControl className="city-control" size="small">
+            <InputLabel
+              id="forecast-location-label"
+              className="city-control-label"
+              shrink
+              disableAnimation
+            >
+              {t("weather.forecast_location")}
+            </InputLabel>
             <Select
-              inputProps={{ "aria-label": t("weather.forecast_location") }}
+              id="forecast-location"
+              labelId="forecast-location-label"
               value={city}
               onChange={(e) => setCity(+e.target.value)}
             >
@@ -89,13 +122,15 @@ export default function App() {
                 </MenuItem>
               ))}
             </Select>
-          </label>
+          </FormControl>
         </header>
         {loading && <LoadingState />}
         {error && (
           <Alert severity="error" className="forecast-error">
             {t(error)}{" "}
-            <Button onClick={() => setRetry((value) => value + 1)}>{t("weather.retry")}</Button>
+            <Button onClick={() => setRetry((value) => value + 1)}>
+              {t("weather.retry")}
+            </Button>
           </Alert>
         )}
         {data && chart && (
@@ -107,17 +142,25 @@ export default function App() {
                 : t("weather.daily_aggregates_for_broader_weather_trends")}{" "}
               {t("weather.times_and_dates")} {data.timezone}.
             </p>
-            <DailyCards data={data} />
+            {data.hourly.length === 0 && data.daily.length === 0 && (
+              <EmptyForecastState />
+            )}
+            {data.daily.length > 0 && <DailyCards data={data} />}
             <TradingInsights view={view} itemsForView={activeSignals} />
-            <ForecastViews
-              view={view}
-              data={data}
-              chart={chart}
-              dailyChart={dailyChart}
-            />
+            {(view === "hourly"
+              ? chart.length > 0
+              : (dailyChart?.length ?? 0) > 0) && (
+              <ForecastViews
+                view={view}
+                data={data}
+                chart={chart}
+                dailyChart={dailyChart}
+              />
+            )}
             <footer>
               <p>{t("weather.electricity_retail_weather_indicators")}</p>
-              {t("weather.timezone")} {data.timezone} · {t("weather.forecast_source")} Open-Meteo · {t("weather.updated")}{" "}
+              {t("weather.timezone")} {data.timezone} ·{" "}
+              {t("weather.forecast_source")} Open-Meteo · {t("weather.updated")}{" "}
               {new Date(data.fetchedAt).toLocaleTimeString(locale)}
             </footer>
           </>

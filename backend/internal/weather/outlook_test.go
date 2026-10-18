@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,7 +36,11 @@ func TestFourteenDailySummaries(t *testing.T) {
 		if *day.MinTemperature != 0 || *day.MaxTemperature != 23 || *day.AvgTemperature != 11.5 || day.TemperatureSampleCount != 24 {
 			t.Fatalf("temperature %+v", day)
 		}
-		if day.SolarEnergyKWhM2 < 2.399 || day.SolarEnergyKWhM2 > 2.401 || day.SolarSampleCount != 24 {
+		wantSamples := 24
+		if i == 13 {
+			wantSamples = 23
+		} // No next-midnight interval in this fixture.
+		if math.Abs(day.SolarEnergyKWhM2-float64(wantSamples)*0.1) > 1e-9 || day.SolarSampleCount != wantSamples {
 			t.Fatalf("solar %+v", day)
 		}
 	}
@@ -49,7 +54,7 @@ func TestIncompleteAndMissingDays(t *testing.T) {
 	if len(days) != 7 || days[0].CompleteDay || days[6].CompleteDay || days[0].HourCount != 12 || days[6].HourCount != 18 {
 		t.Fatalf("partial days %+v", days)
 	}
-	if days[0].TemperatureSampleCount != 11 || days[0].SolarSampleCount != 11 || completeSolar(days[0]) {
+	if days[0].TemperatureSampleCount != 11 || days[0].SolarSampleCount != 12 || completeSolar(days[0]) {
 		t.Fatalf("missing readings %+v", days[0])
 	}
 	if got := summarize(points[:2]); len(got) != 1 {
@@ -79,7 +84,9 @@ func TestLocalDayGroupingAndDST(t *testing.T) {
 		start, _ := time.ParseInLocation("2006-01-02", tt.date, location)
 		points := []Point{}
 		for i := range tt.hours {
-			points = append(points, Point{Time: start.Add(time.Duration(i) * time.Hour).Format("2006-01-02T15:04"), Temperature: f(10), SolarIrradiance: f(0)})
+			instant := start.Add(time.Duration(i) * time.Hour)
+			unixTime := instant.Unix()
+			points = append(points, Point{UnixTime: &unixTime, Time: instant.Format("2006-01-02T15:04"), Temperature: f(10), SolarIrradiance: f(0)})
 		}
 		day := summarize(points, "Europe/Helsinki")[0]
 		if day.ExpectedHourCount != tt.hours || !day.CompleteDay {
@@ -151,13 +158,15 @@ func TestOpenMeteoFourteenDayForecast(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.URL.Query().Get("forecast_days") != "14" || r.URL.Query().Get("timezone") != "auto" {
-			t.Error("request lost fourteen-day local forecast")
+		if r.URL.Query().Get("forecast_days") != "15" || r.URL.Query().Get("timezone") != "auto" {
+			t.Error("request lost extra-day local forecast")
 		}
 		var raw omResponse
 		raw.Timezone = "Europe/Helsinki"
 		for _, point := range points {
-			raw.Hourly.Time = append(raw.Hourly.Time, point.Time)
+			location, _ := time.LoadLocation("Europe/Helsinki")
+			timestamp, _ := time.ParseInLocation("2006-01-02T15:04", point.Time, location)
+			raw.Hourly.Time = append(raw.Hourly.Time, timestamp.Unix())
 			raw.Hourly.Temperature = append(raw.Hourly.Temperature, point.Temperature)
 			raw.Hourly.Solar = append(raw.Hourly.Solar, point.SolarIrradiance)
 		}

@@ -3,7 +3,6 @@ package main
 import (
 	"testing"
 	"time"
-
 	"weather-retailer/backend/internal/weather"
 )
 

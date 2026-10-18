@@ -1,3 +1,4 @@
+import Alert from "@mui/material/Alert";
 import AppBar from "@mui/material/AppBar";
 import Toolbar from "@mui/material/Toolbar";
 import MuiButton from "@mui/material/Button";
@@ -16,7 +17,9 @@ export function ApplicationShell({ children }: { children: ReactNode }) {
   const { t, locale, setLocale } = useI18n();
   return (
     <>
-      <a className="skip-link" href="#forecast-workspace">{t("weather.skip_to_forecast")}</a>
+      <a className="skip-link" href="#forecast-workspace">
+        {t("weather.skip_to_forecast")}
+      </a>
       <AppBar position="static" elevation={0} className="app-bar">
         <Toolbar className="app-bar-content">
           <div className="app-brand">
@@ -30,12 +33,16 @@ export function ApplicationShell({ children }: { children: ReactNode }) {
             </svg>
             <span>{t("weather.app_title")}</span>
           </div>
-          <span className="app-bar-section">{t("weather.weather_outlook")}</span>
+          <span className="app-bar-section">
+            {t("weather.weather_outlook")}
+          </span>
           <Select
             className="language-control"
             inputProps={{ "aria-label": t("weather.language") }}
             value={locale}
-            onChange={(event) => setLocale(event.target.value === "fi" ? "fi" : "en")}
+            onChange={(event) =>
+              setLocale(event.target.value === "fi" ? "fi" : "en")
+            }
           >
             <MenuItem value="en">English</MenuItem>
             <MenuItem value="fi">Suomi</MenuItem>
@@ -51,14 +58,22 @@ export function Button({ className = "", ...props }: ButtonProps) {
   return <MuiButton type="button" className={className} {...props} />;
 }
 
-export function ForecastSwitch({ view, onChange, }: { view: ForecastView; onChange: (view: ForecastView) => void; }) {
+export function ForecastSwitch({
+  view,
+  onChange,
+}: {
+  view: ForecastView;
+  onChange: (view: ForecastView) => void;
+}) {
   const { t } = useI18n();
   return (
     <ToggleButtonGroup
       className="forecast-switch"
       exclusive
       value={view}
-      onChange={(_, next: ForecastView | null) => { if (next) onChange(next); }}
+      onChange={(_, next: ForecastView | null) => {
+        if (next) onChange(next);
+      }}
       aria-label={t("weather.forecast_resolution")}
       color="primary"
     >
@@ -72,6 +87,17 @@ export function LoadingState() {
   const { t } = useI18n();
   return (
     <Box component="section" className="state" role="status" aria-live="polite">
-      <CircularProgress size={20} aria-hidden="true" />{t("weather.loading_forecast")}</Box>
+      <CircularProgress size={20} aria-hidden="true" />
+      {t("weather.loading_forecast")}
+    </Box>
+  );
+}
+
+export function EmptyForecastState() {
+  const { t } = useI18n();
+  return (
+    <Alert severity="info" className="forecast-empty">
+      {t("weather.no_daily_forecast_is_available_for_weather")}
+    </Alert>
   );
 }

@@ -24,7 +24,7 @@ type omResponse struct {
 	Longitude float64 `json:"longitude"`
 	Timezone  string  `json:"timezone"`
 	Hourly    struct {
-		Time          []string   `json:"time"`
+		Time          []int64    `json:"time"`
 		Temperature   []*float64 `json:"temperature_2m"`
 		WindSpeed     []*float64 `json:"wind_speed_120m"`
 		WindDirection []*float64 `json:"wind_direction_120m"`
@@ -48,8 +48,9 @@ func (o OpenMeteo) Forecast(ctx context.Context, lat, lon float64) (Forecast, er
 	q.Set("latitude", strconv.FormatFloat(lat, 'f', 4, 64))
 	q.Set("longitude", strconv.FormatFloat(lon, 'f', 4, 64))
 	q.Set("hourly", "temperature_2m,shortwave_radiation,wind_speed_120m,wind_direction_120m")
-	q.Set("forecast_days", "14")
+	q.Set("forecast_days", "15")
 	q.Set("timezone", "auto")
+	q.Set("timeformat", "unixtime")
 	q.Set("wind_speed_unit", "ms")
 
 	u.RawQuery = q.Encode()
@@ -84,9 +85,29 @@ func (o OpenMeteo) Forecast(ctx context.Context, lat, lon float64) (Forecast, er
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return Forecast{}, &ProviderError{Operation: "decode Open-Meteo forecast", Kind: ErrProviderResponse, Cause: err}
 	}
+	timezone := raw.Timezone
+	if timezone == "" {
+		timezone = "UTC"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return Forecast{}, &ProviderError{Operation: "load Open-Meteo timezone", Kind: ErrProviderResponse, Cause: err}
+	}
 	n := len(raw.Hourly.Time)
 	points := make([]Point, 0, n)
+	// Request an extra day so DST changes cannot shorten the final local day.
+	// Keep only the original 14 local calendar days in the dashboard response.
+	var forecastEnd time.Time
+	if n > 0 {
+		first := time.Unix(raw.Hourly.Time[0], 0).In(location)
+		forecastStart := time.Date(first.Year(), first.Month(), first.Day(), 0, 0, 0, 0, location)
+		forecastEnd = forecastStart.AddDate(0, 0, 14)
+	}
 	for i := 0; i < n; i++ {
+		instant := time.Unix(raw.Hourly.Time[i], 0).In(location)
+		if instant.After(forecastEnd) {
+			continue
+		}
 		var t, s *float64
 		if i < len(raw.Hourly.Temperature) {
 			t = raw.Hourly.Temperature[i]
@@ -101,30 +122,40 @@ func (o OpenMeteo) Forecast(ctx context.Context, lat, lon float64) (Forecast, er
 		if i < len(raw.Hourly.WindDirection) {
 			windDirection = validWindValue(raw.Hourly.WindDirection[i], true)
 		}
+		unixTime := raw.Hourly.Time[i]
 		points = append(points, Point{
+			UnixTime:        &unixTime,
 			WindSpeed:       windSpeed,
 			WindDirection:   windDirection,
 			WindPotential:   windPotential(windSpeed),
-			Time:            raw.Hourly.Time[i],
+			Time:            instant.Format("2006-01-02T15:04"),
 			Temperature:     t,
 			SolarIrradiance: s,
 		})
 	}
+	// The boundary midnight supplies the final solar interval only.
+	visiblePoints := points
+	if len(points) > 0 && *points[len(points)-1].UnixTime == forecastEnd.Unix() {
+		visiblePoints = points[:len(points)-1]
+	}
 	f := Forecast{
 		Latitude:  raw.Latitude,
 		Longitude: raw.Longitude,
-		Timezone:  raw.Timezone,
-		Hourly:    points,
+		Timezone:  timezone,
+		Hourly:    visiblePoints,
 		FetchedAt: time.Now().UTC(),
 	}
 	f.Daily = summarize(points, f.Timezone)
+	if len(f.Daily) > 0 && f.Daily[len(f.Daily)-1].Date == forecastEnd.Format("2006-01-02") {
+		f.Daily = f.Daily[:len(f.Daily)-1]
+	}
 	f.Signals = signals(f.Daily)
 	f.OutlookSignals = outlookSignals(f.Daily)
 	windCfg := DefaultWindInsightConfig()
 	if o.WindInsights != nil {
 		windCfg = *o.WindInsights
 	}
-	f.Signals = mergeWindInsights(f.Signals, hourlyWindInsights(points, f.Timezone, f.FetchedAt, windCfg))
+	f.Signals = mergeWindInsights(f.Signals, hourlyWindInsights(visiblePoints, f.Timezone, f.FetchedAt, windCfg))
 	f.OutlookSignals = mergeWindInsights(f.OutlookSignals, dailyWindInsights(f.Daily, windCfg))
 	return f, nil
 }

@@ -45,9 +45,9 @@ func completeSolar(day DailySummary) bool {
 }
 
 // Compare daily means only when the entire day has wind readings.
-func windMean(day DailySummary) (float64, bool) {
-	if !day.CompleteDay || day.HourCount == 0 || day.WindSampleCount != day.HourCount || validWindValue(day.MeanWindSpeed, false) == nil {
+func windAverage(day DailySummary) (float64, bool) {
+	if !day.CompleteDay || day.HourCount == 0 || day.WindSampleCount != day.HourCount || validWindValue(day.AvgWindSpeed, false) == nil {
 		return 0, false
 	}
-	return *day.MeanWindSpeed, true
+	return *day.AvgWindSpeed, true
 }

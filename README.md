@@ -199,7 +199,7 @@ and Recharts styling. Recharts still owns all chart rendering.
 
 Wind conditions help electricity retailers monitor weather-driven supply
 uncertainty alongside temperature-related demand and solar availability.
-The existing 14-day Open-Meteo call also requests `wind_speed_120m` and
+The Open-Meteo call also requests `wind_speed_120m` and
 `wind_direction_120m`, with `wind_speed_unit=ms`. See the
 [Open-Meteo forecast documentation](https://open-meteo.com/en/docs).
 120 m is a useful illustrative hub-height proxy, closer to turbine operating
@@ -210,15 +210,15 @@ Hourly wind tooltips show the backend-calculated qualitative categories: below 3
 6 low; 6 to below 10 moderate; 10 through 15 high; above 15 strong wind with
 uncertain turbine-specific output. These are illustrative heuristics, not
 validated turbine operating ranges or a power curve. Strong winds may lead to
-output reduction or safety shutdown; more wind does not always mean more output.
+output reduction or safety shutdown; more wind does not always average more output.
 No MW/MWh, actual generation, demand, or price forecast is calculated. Installed
 capacity, turbine curves, availability, terrain, and regional generation data
 would be required for a production forecast.
 
-The three daily cards show mean wind at 120 m. The 72-hour detail section
+The three daily cards show average wind at 120 m. The 72-hour detail section
 includes an hourly wind chart with direction and potential in its tooltip. The
-14-day table and wind chart show daily minimum/minimum/mean/maximum wind; there is no standalone
-wind summary card. Chart tooltips mark partial daily coverage. A concise accessible information tooltip explains the qualitative proxy. Wind classification applies to individual hourly speeds, not daily mean
+14-day table and wind chart show daily minimum/minimum/average/maximum wind; there is no standalone
+wind summary card. Chart tooltips mark partial daily coverage. A concise accessible information tooltip explains the qualitative proxy. Wind classification applies to individual hourly speeds, not daily average
 speeds. Missing/null or invalid wind readings remain unavailable, and charts do
 not connect gaps. Zero wind is valid. Daily aggregates use available samples and
 show partial coverage; missing direction does not discard a valid speed. Direction
@@ -226,7 +226,7 @@ is not averaged across days because angles require circular statistics.
 
 To check manually, select a city and inspect the compact wind summaries in the
 three daily cards. Hover the hourly wind chart to see speed, direction, and
-potential, then switch to the 14-day table and inspect minimum/mean/maximum wind and
+potential, then switch to the 14-day table and inspect minimum/average/maximum wind and
 coverage. Switch languages and use keyboard focus on the information tooltips. Test fixtures cover boundaries,
 nulls, short arrays, zero wind, JSON, and aggregation without calling the live API.
 
@@ -234,36 +234,42 @@ nulls, short arrays, zero wind, JSON, and aggregation without calling the live A
 
 “Next 3 days” contains a daily weather summary and hourly weather details.
 Cards use daily average/minimum/maximum temperatures, accumulated irradiation,
-and mean wind at 120 m. The 14-day outlook retains the daily table and charts.
+and average wind at 120 m. The 14-day outlook retains the daily table and charts.
 The sun and wind symbols identify irradiation and wind metrics; they do not
 represent weather conditions. No weather-condition code is requested.
 
-Daily summary cards also show the circular mean wind-from direction at 120 m. The arrow points toward the source (north means wind from the north), alongside an eight-point compass label. The mean gives equal weight to available non-calm hourly bearings; missing readings are excluded and cancelling bearings leave the direction unavailable. This daily mean can hide changes within the day; use hourly wind tooltips for individual measurements.
+Daily summary cards also show the circular average wind-from direction at 120 m. The arrow points toward the source (north means wind from the north), alongside an eight-point compass label. The average gives equal weight to available non-calm hourly bearings; missing readings are excluded and cancelling bearings leave the direction unavailable. This daily average can hide changes within the day; use hourly wind tooltips for individual measurements.
 
 ### Wind generation insights
 
-The existing `signals` and `outlookSignals` arrays now include `kind: "wind"`, rendered in the existing trading insight cards. Wind speed remains a qualitative proxy at 120 m, not a forecast of MW, MWh, demand, prices or grid shortages. The daily API also exposes `windDirectionConsistency` (mean resultant length, 0–1).
+The existing `signals` and `outlookSignals` arrays now include `kind: "wind"`, rendered in the existing trading insight cards. Wind speed remains a qualitative proxy at 120 m, not a forecast of MW, MWh, demand, prices or grid shortages. The daily API also exposes `windDirectionConsistency` (average resultant length, 0–1).
 
-The next-3-days detector uses only the upcoming 72 hours, grouped into complete, consecutive six-hour windows in the forecast location's timezone. Speed trends require at least three windows (18 hours), two actual changes, monotonic window means and a significant total change. Missing speeds or timestamp gaps break a window. A low-wind period requires every hourly reading to be below the threshold, not just its window mean.
+The next-3-days detector uses only the upcoming 72 hours, grouped into complete, consecutive six-hour windows in the forecast location's timezone. Speed trends require at least three windows (18 hours), two actual changes, monotonic window means and a significant total change. Missing speeds or timestamp gaps break a window. A low-wind period requires every hourly reading to be below the threshold, not just its window average.
 
-The 14-day detector reuses the existing `trendPeriod` helper on daily means: at least three consecutive complete days, two actual changes, monotonic means and a significant overall change. Incomplete days or missing wind readings break a trend. Low daily mean wind must persist for at least two complete consecutive days; an individual day may still contain higher hourly speeds. The strongest qualifying speed trend in each direction (weakening and improving), one longest low-wind period and one largest qualifying direction shift are reported per view. Opposite speed trends describe their own dated periods.
+The 14-day detector reuses the existing `trendPeriod` helper on daily means: at least three consecutive complete days, two actual changes, monotonic means and a significant overall change. Incomplete days or missing wind readings break a trend. Low daily average wind must persist for at least two complete consecutive days; an individual day may still contain higher hourly speeds. The strongest qualifying speed trend in each direction (weakening and improving), one longest low-wind period and one largest qualifying direction shift are reported per view. Opposite speed trends describe their own dated periods.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
-| `WIND_SPEED_CHANGE_MS` | 3 | Minimum sustained mean-speed change, m/s |
+| `WIND_SPEED_CHANGE_MS` | 3 | Minimum sustained average-speed change, m/s |
 | `WIND_LOW_SPEED_MS` | 3 | Low-wind threshold; readings/means must be strictly below, m/s |
 | `WIND_MIN_LOW_HOURS` | 12 | Minimum consecutive low-wind hours (12–72; rounded up to complete six-hour windows) |
 | `WIND_MIN_LOW_DAYS` | 2 | Minimum consecutive complete low-wind days (2–14) |
 | `WIND_DIRECTION_CHANGE_DEG` | 60 | Minimum circular direction shift, degrees (up to 180) |
-| `WIND_DIRECTION_CONSISTENCY` | 0.8 | Minimum directional mean resultant length (up to 1) |
+| `WIND_DIRECTION_CONSISTENCY` | 0.8 | Minimum directional average resultant length (up to 1) |
 | `WIND_STRONG_SPEED_MS` | 15 | Suppress speed-trend generation headlines if any included hourly reading exceeds this value |
 | `WIND_COMBINED_LOW_SOLAR_KWH_M2` | 1 | Maximum daily solar-energy proxy for a combined warning, kWh/m² |
-| `WIND_COMBINED_LOW_SOLAR_W_M2` | 100 | Maximum six-hour mean solar irradiance for a combined warning, W/m² |
+| `WIND_COMBINED_LOW_SOLAR_W_M2` | 100 | Maximum six-hour average solar irradiance for a combined warning, W/m² |
 
-Direction shifts compare adjacent six-hour windows or complete days, requiring every direction reading, non-calm winds, mean speeds at least the low-wind threshold, and consistent bearings in both periods. Circular differences correctly treat 350° to 10° as 20°, not 340°. Bearings describe where wind comes from; variable/opposing or calm winds do not produce a direction-change insight.
+Direction shifts compare adjacent six-hour windows or complete days, requiring every direction reading, non-calm winds, average speeds at least the low-wind threshold, and consistent bearings in both periods. Circular differences correctly treat 350° to 10° as 20°, not 340°. Bearings describe where wind comes from; variable/opposing or calm winds do not produce a direction-change insight.
 
 A combined warning requires a sustained low-wind period with complete temperature and solar data throughout, temperature falling at least 3°C and ending below the existing 18°C heating reference, and solar availability below its configured limit throughout. It replaces an existing combined card in that view to avoid duplicate or opposing combined headlines. Existing temperature and solar detectors are unchanged. Empty frontend insight categories are hidden.
 
 These thresholds are illustrative, configurable heuristics, not calibrated turbine operating ranges. Wind direction effects depend on site and turbine characteristics; high winds can lead to output reduction or shutdown. Six-hour averaging can hide shorter changes, and daily averaging can hide hourly variability. Low hourly solar irradiance includes nighttime, so a short-term combined warning describes its specified period rather than a full day's PV outlook. Missing/partial data can suppress insights; silence is not evidence of stable generation or prices. DST ambiguities or gaps conservatively break hourly runs.
 
 To check the feature manually, fetch a forecast, open both forecast views, and inspect the Wind generation conditions category when a qualifying period exists. No wind card appears when there is no meaningful signal. Change environment thresholds and restart the backend (clearing its in-memory cache) to evaluate different heuristics. Automated tests use controlled forecasts; production still uses Open-Meteo.
+
+### DST-aware forecast timestamps
+
+Open-Meteo uses its default ISO-style local timestamp strings (for example, `2026-10-14T13:00`); no `timeformat` override is sent. Coverage checks still use the forecast timezone's local day length (23/24/25 hours). The optional Unix timestamp support remains for other callers, but this provider no longer supplies it. Offset-free strings cannot distinguish repeated local hours, and the provider's fixed-offset forecast may remain partial across daylight-saving changes. Missing measurements are never invented.
+
+The backend requests 15 forecast days to provide a buffer across daylight-saving changes, then returns only the first 14 local calendar days. The extra coverage can complete the final local day; unavailable upstream readings still remain missing.

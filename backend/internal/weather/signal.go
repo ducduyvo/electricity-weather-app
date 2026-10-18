@@ -67,7 +67,13 @@ func signals(days []DailySummary) []Signal {
 			out = append(out, Signal{
 				Kind:     "solar",
 				Severity: "warning",
-				Title:    "Lower solar availability",
+				Code:     "solar_daily_decreasing",
+				Params: map[string]any{
+					"change":   solarChange,
+					"date":     tomorrow.Date,
+					"baseline": today.Date,
+				},
+				Title: "Lower solar availability",
 				Detail: fmt.Sprintf(
 					"Solar-energy proxy on %s falls %.2f kWh/m² versus %s. Lower irradiance may reduce favorable conditions for solar PV generation.",
 					tomorrow.Date,
@@ -79,7 +85,13 @@ func signals(days []DailySummary) []Signal {
 			out = append(out, Signal{
 				Kind:     "solar",
 				Severity: "info",
-				Title:    "Higher solar availability",
+				Code:     "solar_daily_increasing",
+				Params: map[string]any{
+					"change":   solarChange,
+					"date":     tomorrow.Date,
+					"baseline": today.Date,
+				},
+				Title: "Higher solar availability",
 				Detail: fmt.Sprintf(
 					"Solar-energy proxy on %s rises %.2f kWh/m² versus %s. Higher irradiance may improve conditions for solar PV generation.",
 					tomorrow.Date,
@@ -123,7 +135,7 @@ func signals(days []DailySummary) []Signal {
 		math.Abs(solarChange) < solarChangeThreshold {
 		out = append(out, Signal{
 			Kind:     "weather",
-			Severity: "normal",
+			Severity: "info",
 			Title:    "Stable weather outlook",
 			Detail:   "No large day-on-day temperature or solar change is detected in the available forecast. This does not imply stable electricity demand, generation, or prices.",
 		})
@@ -134,46 +146,64 @@ func signals(days []DailySummary) []Signal {
 
 func temperatureSignal(delta, today, tomorrow float64) *Signal {
 	if delta <= -temperatureChangeThreshold {
+		interpretation := "dependent"
 		detail := fmt.Sprintf("Average temperature is expected to fall %.1f°C tomorrow. ", -delta)
 
 		switch {
 		case tomorrow < heatingReference:
 			detail += "Colder conditions may increase heating-driven electricity demand."
+			interpretation = "heating_increase"
 		case today > coolingReference:
 			detail += "Cooling-driven electricity demand conditions may ease."
+			interpretation = "cooling_ease"
 		default:
 			detail += "The electricity-demand implication depends on heating and cooling needs."
+			interpretation = "dependent"
 		}
 
 		return &Signal{
 			Kind:     "temperature",
 			Severity: "warning",
-			Title:    "Colder tomorrow",
-			Detail:   detail,
+			Code:     "temperature_decreasing",
+			Params: map[string]any{
+				"change":         delta,
+				"interpretation": interpretation,
+			},
+			Title:  "Colder tomorrow",
+			Detail: detail,
 		}
 	}
 
 	if delta >= temperatureChangeThreshold {
+		interpretation := "dependent"
 		detail := fmt.Sprintf("Average temperature is expected to rise %.1f°C tomorrow. ", delta)
 
 		severity := "info"
 		switch {
 		case tomorrow > coolingReference:
 			detail += "Warmer conditions may increase cooling-driven electricity demand."
+			interpretation = "cooling_increase"
 			if tomorrow >= coolingReference+5.0 {
 				severity = "warning" // severe heat spike
 			}
 		case today < heatingReference:
 			detail += "Heating-driven electricity demand conditions may ease."
+			interpretation = "heating_ease"
 		default:
 			detail += "The electricity-demand implication depends on heating and cooling needs."
+			interpretation = "dependent"
 		}
 
 		return &Signal{
 			Kind:     "temperature",
 			Severity: severity,
-			Title:    "Warmer tomorrow",
-			Detail:   detail,
+			Code:     "temperature_increasing",
+			Params: map[string]any{
+				"change":         delta,
+				"interpretation": interpretation,
+			},
+			Title:  "Warmer tomorrow",
+			Detail: detail,
 		}
 	}
 
@@ -185,15 +215,17 @@ func solarPeakSignal(day DailySummary) *Signal {
 		return nil
 	}
 
-	peakTime, err := time.Parse("2006-01-02T15:04", day.PeakSolarTime)
-	if err != nil {
+	peakTime, valid := parseSolarPeakTime(day.PeakSolarTime)
+	if !valid {
 		return nil
 	}
 
+	code := "solar_peak"
 	title := "Solar period expected"
 	conditions := "indicating potential solar PV generation conditions"
 
 	if *day.PeakSolarIrradiance >= strongSolarPeak {
+		code = "solar_peak_strong"
 		title = "Strong solar period expected"
 		conditions = "indicating favorable irradiance conditions for solar PV generation"
 	}
@@ -211,9 +243,33 @@ func solarPeakSignal(day DailySummary) *Signal {
 	}
 
 	return &Signal{
+		Code: code,
+		Params: map[string]any{
+			"date":    day.Date,
+			"time":    peakTime.Format("15:04"),
+			"peak":    *day.PeakSolarIrradiance,
+			"partial": !completeSolar(day),
+		},
 		Kind:     "solar",
 		Severity: "info",
 		Title:    title,
 		Detail:   detail,
 	}
+}
+
+// Preserve the supplied clock time: peak timestamps are local to the forecast.
+func parseSolarPeakTime(value string) (time.Time, bool) {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04Z07:00",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04",
+		"15:04:05",
+		"15:04",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
 }
