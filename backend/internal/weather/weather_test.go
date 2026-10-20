@@ -95,8 +95,8 @@ func TestSignalsThresholds(t *testing.T) {
 		{"warmer boundary", 13, 4, "Warmer tomorrow", "temperature", "info"},
 		{"lower solar boundary", 10, 3, "Lower solar availability", "solar", "warning"},
 		{"higher solar boundary", 10, 5, "Higher solar availability", "solar", "info"},
-		{"stable", 10, 4, "Stable weather outlook", "weather", "info"},
-		{"below thresholds", 12.9, 4.49, "Stable weather outlook", "weather", "info"},
+		{"stable", 10, 4, "Stable temperature and solar outlook", "weather", "info"},
+		{"below thresholds", 12.9, 4.49, "Stable temperature and solar outlook", "weather", "info"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

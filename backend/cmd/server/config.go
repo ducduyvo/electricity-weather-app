@@ -59,6 +59,12 @@ func loadConfig() (config, error) {
 		}
 		*threshold.value = value
 	}
+	// Celsius thresholds may be zero or negative, so only require finiteness.
+	cold, err := strconv.ParseFloat(envOrDefault("WIND_COMBINED_PERSISTENT_COLD_C", strconv.FormatFloat(cfg.WindInsights.PersistentCold, 'f', -1, 64)), 64)
+	if err != nil || math.IsNaN(cold) || math.IsInf(cold, 0) {
+		return config{}, fmt.Errorf("WIND_COMBINED_PERSISTENT_COLD_C must be a finite number")
+	}
+	cfg.WindInsights.PersistentCold = cold
 	for _, threshold := range []struct {
 		name             string
 		value            *int

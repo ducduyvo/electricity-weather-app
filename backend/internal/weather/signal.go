@@ -136,8 +136,8 @@ func signals(days []DailySummary) []Signal {
 		out = append(out, Signal{
 			Kind:     "weather",
 			Severity: "info",
-			Title:    "Stable weather outlook",
-			Detail:   "No large day-on-day temperature or solar change is detected in the available forecast. This does not imply stable electricity demand, generation, or prices.",
+			Title:    "Stable temperature and solar outlook",
+			Detail:   "No large day-on-day temperature or solar change is detected in the available forecast. Wind stability is not assessed here. This does not imply stable electricity demand, generation, or prices.",
 		})
 	}
 

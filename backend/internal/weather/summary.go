@@ -138,7 +138,7 @@ func summarize(points []Point, timezone ...string) []DailySummary {
 	}
 
 	sort.Strings(dates)
-	summaries := []DailySummary{}
+	summaries := make([]DailySummary, 0, len(dates))
 
 	for _, date := range dates {
 		agg := aggByDate[date]

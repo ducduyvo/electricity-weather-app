@@ -29,8 +29,8 @@ func (c *Cached) Forecast(ctx context.Context, lat, lon float64) (Forecast, erro
 	if c.data == nil {
 		c.data = map[string]cacheItem{}
 	}
-	// Lazy eviction needs no background goroutine.
 	now := time.Now()
+	// Remove entries whose TTL has elapsed when a request arrives.
 	for k, v := range c.data {
 		if !now.Before(v.expires) {
 			delete(c.data, k)

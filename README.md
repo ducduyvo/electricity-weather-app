@@ -258,6 +258,7 @@ The 14-day detector reuses the existing `trendPeriod` helper on daily means: at 
 | `WIND_DIRECTION_CONSISTENCY` | 0.8 | Minimum directional average resultant length (up to 1) |
 | `WIND_STRONG_SPEED_MS` | 15 | Suppress speed-trend generation headlines if any included hourly reading exceeds this value |
 | `WIND_COMBINED_LOW_SOLAR_KWH_M2` | 1 | Maximum daily solar-energy proxy for a combined warning, kWh/m² |
+| `WIND_COMBINED_PERSISTENT_COLD_C` | 10 | Strict upper temperature bound for persistent cold, °C; any finite value |
 | `WIND_COMBINED_LOW_SOLAR_W_M2` | 100 | Maximum six-hour average solar irradiance for a combined warning, W/m² |
 
 Direction shifts compare adjacent six-hour windows or complete days, requiring every direction reading, non-calm winds, average speeds at least the low-wind threshold, and consistent bearings in both periods. Circular differences correctly treat 350° to 10° as 20°, not 340°. Bearings describe where wind comes from; variable/opposing or calm winds do not produce a direction-change insight.
@@ -273,3 +274,42 @@ To check the feature manually, fetch a forecast, open both forecast views, and i
 Open-Meteo uses its default ISO-style local timestamp strings (for example, `2026-10-14T13:00`); no `timeformat` override is sent. Coverage checks still use the forecast timezone's local day length (23/24/25 hours). The optional Unix timestamp support remains for other callers, but this provider no longer supplies it. Offset-free strings cannot distinguish repeated local hours, and the provider's fixed-offset forecast may remain partial across daylight-saving changes. Missing measurements are never invented.
 
 The backend requests 15 forecast days to provide a buffer across daylight-saving changes, then returns only the first 14 local calendar days. The extra coverage can complete the final local day; unavailable upstream readings still remain missing.
+
+### Combined weather insight assumptions
+
+The existing longest consecutive low-wind period (at least 12 hourly forecast
+hours or two complete daily summaries by default) supports two combined rules:
+
+- **Worsening:** the first-to-last average temperature falls by at least 3°C,
+  ends strictly below 18°C, and solar availability stays low.
+- **Persistent cold:** every measured temperature stays strictly below
+  `WindInsightConfig.PersistentCold` (default **10°C**) and solar availability
+  stays low. Hourly windows use their maximum temperature; daily summaries use
+  the daily maximum and require complete temperature measurements. This default
+  is an illustrative demonstration setting, not a universal heating-demand
+  threshold. Configure it with `WIND_COMBINED_PERSISTENT_COLD_C` or through `WindInsightConfig` in Go.
+
+Worsening takes precedence when both rules pass. Both require wind speeds to
+remain strictly below 3 m/s, including the maximum within each window. Missing
+measurements, date gaps, or stronger winds cannot bridge a qualifying period.
+The existing selection of the longest low-wind period is retained; shorter
+cold/low-solar subperiods are not searched independently.
+
+Short-term solar evidence uses the average of all six hourly irradiance readings
+in each existing wind window, including nighttime. All six readings must be valid,
+and each window's average must be at most **100 W/m²**. Nighttime can therefore
+contribute to low short-term solar availability; this describes the specified
+period rather than unusually low daytime availability or a full day's PV outlook.
+
+The 14-day outlook continues to require complete local calendar days, including
+23/25-hour DST days, and uses daily solar energy at most **1 kWh/m²** for the
+combined rule. Low absolute availability is separate from a decreasing solar
+trend. Combined insights lead the list and replace the matching low-wind
+insight. A worsening combined insight also suppresses an existing cold trend
+with exactly the same period; different periods, solar trends and unknown-period
+insights are retained. Stability descriptions concern temperature and solar
+only, not wind or electricity prices. These are qualitative weather conditions,
+not predictions of demand, renewable production or prices.
+
+Expired cache entries are removed on each request based on their TTL, so
+expired forecasts are never served.

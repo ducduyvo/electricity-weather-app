@@ -85,3 +85,27 @@ func TestWindInsightConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestPersistentColdConfiguration(t *testing.T) {
+	for _, value := range []string{"", "0", "-5", "7.5"} {
+		t.Run("valid_"+value, func(t *testing.T) {
+			t.Setenv("WIND_COMBINED_PERSISTENT_COLD_C", value)
+			cfg, err := loadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := map[string]float64{"": 10, "0": 0, "-5": -5, "7.5": 7.5}[value]
+			if cfg.WindInsights.PersistentCold != want {
+				t.Fatalf("got %v want %v", cfg.WindInsights.PersistentCold, want)
+			}
+		})
+	}
+	for _, value := range []string{"NaN", "Inf", "-Inf", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("WIND_COMBINED_PERSISTENT_COLD_C", value)
+			if _, err := loadConfig(); err == nil {
+				t.Fatal("invalid threshold accepted")
+			}
+		})
+	}
+}

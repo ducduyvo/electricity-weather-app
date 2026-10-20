@@ -17,6 +17,7 @@ type WindInsightConfig struct {
 	LowSolarHourly       float64
 	MinimumLowHours      int
 	MinimumLowDays       int
+	PersistentCold       float64 // Demo threshold for every temperature, °C.
 }
 
 func DefaultWindInsightConfig() WindInsightConfig {
@@ -30,6 +31,7 @@ func DefaultWindInsightConfig() WindInsightConfig {
 		LowSolarHourly:       100,
 		MinimumLowHours:      12,
 		MinimumLowDays:       2,
+		PersistentCold:       10,
 	}
 }
 
@@ -40,9 +42,10 @@ type windWindow struct {
 	avgSpeed       float64
 	maxSpeed       float64
 	avgDirection   *float64
-	consistency    float64 // Ratio of valid wind-direction samples to total samples, not a directional measure.
-	temp           *float64
-	solar          *float64
+	consistency    float64 // Mean direction-vector length: 0 varies/cancels, 1 is aligned.
+	avgTemperature *float64
+	solar          *float64 // Six-hour average irradiance (W/m²) or daily energy (kWh/m²).
+	maxTemp        *float64
 }
 
 func dailyWindInsights(days []DailySummary, cfg WindInsightConfig) []Signal {
@@ -81,15 +84,20 @@ func dailyWindInsights(days []DailySummary, cfg WindInsightConfig) []Signal {
 			continue
 		}
 		windows[i].avgSpeed = speed
+		if validWindValue(day.MaxWindSpeed, false) == nil {
+			windows[i].avgSpeed = math.NaN()
+			continue
+		}
+		windows[i].maxSpeed = *day.MaxWindSpeed
 		windows[i].avgDirection = day.AvgWindDirection
-		// WindDirectionConsistency is a ratio of valid wind-direction samples to total samples, not a directional measure.
-		// 1 indicates all valid samples are mostly from the same direction, 0 indicates directions vary widely or cancel each other out.
+		// Consistency measures alignment; sample count checks coverage separately.
 		windows[i].consistency = day.WindDirectionConsistency
 		if day.WindDirectionSampleCount != day.HourCount {
 			windows[i].avgDirection = nil
 		}
 		if completeTemperature(day) {
-			windows[i].temp = day.AvgTemperature
+			windows[i].avgTemperature = day.AvgTemperature
+			windows[i].maxTemp = day.MaxTemperature
 		}
 		if completeSolar(day) {
 			v := day.SolarEnergyKWhM2
@@ -158,8 +166,10 @@ func hourlyWindInsights(points []Point, timezone string, now time.Time, cfg Wind
 			startTime:      start,
 		}
 
-		var sinSum, cosSum, temp, solar float64
-		directions, temps, solars := 0, 0, 0
+		var sinSum, cosSum, avgTemperature, avgSolarIrradiance float64
+		var temperatureSum, solarIrradianceSum float64
+		validWindDirectionCount, validTemperatureCount, validSolarReadingCount := 0, 0, 0
+		maxTemp := math.Inf(-1)
 
 		for _, p := range block {
 			w.avgSpeed += *p.WindSpeed / float64(windWindowHours)
@@ -167,26 +177,30 @@ func hourlyWindInsights(points []Point, timezone string, now time.Time, cfg Wind
 			if d := validWindValue(p.WindDirection, true); d != nil && *p.WindSpeed > 0 {
 				sinSum += math.Sin(*d * math.Pi / 180)
 				cosSum += math.Cos(*d * math.Pi / 180)
-				directions++
+				validWindDirectionCount++
 			}
 			if validTemperature(p.Temperature) {
-				temp += *p.Temperature / float64(windWindowHours)
-				temps++
+				temperatureSum += *p.Temperature
+				avgTemperature = temperatureSum / float64(windWindowHours)
+				validTemperatureCount++
+				maxTemp = math.Max(maxTemp, *p.Temperature)
 			}
 			if validSolarIrradiance(p.SolarIrradiance) {
-				solar += *p.SolarIrradiance / float64(windWindowHours)
-				solars++
+				solarIrradianceSum += *p.SolarIrradiance
+				avgSolarIrradiance = solarIrradianceSum / float64(windWindowHours)
+				validSolarReadingCount++
 			}
 		}
 
-		if directions == windWindowHours {
-			w.avgDirection, w.consistency = avgWindDirection(sinSum, cosSum, directions)
+		if validWindDirectionCount == windWindowHours {
+			w.avgDirection, w.consistency = avgWindDirection(sinSum, cosSum, validWindDirectionCount)
 		}
-		if temps == windWindowHours {
-			w.temp = &temp
+		if validTemperatureCount == windWindowHours {
+			w.avgTemperature = &avgTemperature
+			w.maxTemp = &maxTemp
 		}
-		if solars == windWindowHours {
-			w.solar = &solar
+		if validSolarReadingCount == windWindowHours {
+			w.solar = &avgSolarIrradiance
 		}
 		windows = append(windows, w)
 		resetBlock()
@@ -282,34 +296,37 @@ func windPeriodInsights(windows []windWindow, windowInterval time.Duration, minL
 			),
 		})
 
-		hasValidTemps := startWindow.temp != nil && endWindow.temp != nil
-		tempFalling := hasValidTemps && *endWindow.temp < heatingReference && (*endWindow.temp-*startWindow.temp) <= -temperatureChangeThreshold
-		hasCompleteLowSolarData := false
-
-		if tempFalling {
-			hasCompleteLowSolarData = true
-			for _, w := range windows[longestLowWindStartIndex : longestLowWindStartIndex+longestLowWindWindowCount] {
-				if w.temp == nil || w.solar == nil || *w.solar > lowSolar {
-					hasCompleteLowSolarData = false
-					break
-				}
+		hasValidTemps := startWindow.avgTemperature != nil && endWindow.avgTemperature != nil
+		tempFalling := hasValidTemps && *endWindow.avgTemperature < heatingReference && (*endWindow.avgTemperature-*startWindow.avgTemperature) <= -temperatureChangeThreshold
+		persistentCold, complete := true, true
+		for _, w := range windows[longestLowWindStartIndex : longestLowWindStartIndex+longestLowWindWindowCount] {
+			if !validTemperature(w.avgTemperature) {
+				complete = false
+			}
+			if !validTemperature(w.maxTemp) || *w.maxTemp >= cfg.PersistentCold {
+				persistentCold = false
+			}
+			if !validSolarIrradiance(w.solar) || *w.solar > lowSolar {
+				complete = false
 			}
 		}
-		if tempFalling && hasCompleteLowSolarData {
-			out = append(out, Signal{
-				Kind:     "combined",
-				Severity: "warning",
-				Title:    "Cold, low-solar and low-wind conditions",
-				Detail: fmt.Sprintf(
-					"From %s through %s, average temperature falls from %.1f to %.1f°C alongside low solar availability and average wind below %.1f m/s. "+
-						"Heating-related demand may rise while renewable generation conditions weaken; actual demand, production and prices are not predicted.",
-					startWindow.startTimestamp,
-					endWindow.endTimestamp,
-					*startWindow.temp,
-					*endWindow.temp,
-					cfg.LowSpeed,
-				),
-			})
+		if complete && (tempFalling || persistentCold) {
+			title := "Cold, low-solar and low-wind conditions"
+			temperatureDetail := fmt.Sprintf("average temperature falls from %.1f to %.1f°C", *startWindow.avgTemperature, *endWindow.avgTemperature)
+			if !tempFalling {
+				title = "Persistent cold, low-solar and low-wind conditions"
+				temperatureDetail = fmt.Sprintf("all measured temperatures remain below %.1f°C", cfg.PersistentCold)
+			}
+			solarDetail := fmt.Sprintf("daily solar energy stays at or below %.1f kWh/m²", lowSolar)
+			if windowInterval != 24*time.Hour {
+				solarDetail = fmt.Sprintf("six-hour solar averages stay at or below %.0f W/m² (including nighttime)", lowSolar)
+			}
+			// The combined description replaces low wind for this exact period.
+			out[len(out)-1] = Signal{
+				Kind: "combined", Severity: "warning", Title: title,
+				Params: map[string]any{"start": startWindow.startTimestamp, "end": endWindow.endTimestamp, "worsening": tempFalling},
+				Detail: fmt.Sprintf("From %s through %s, %s, %s, and wind remains below %.1f m/s for %d forecast %s. Heating-related demand may be elevated while renewable generation conditions are weak; actual demand, production and prices are not predicted.", startWindow.startTimestamp, endWindow.endTimestamp, temperatureDetail, solarDetail, cfg.LowSpeed, duration, unit),
+			}
 		}
 	}
 
@@ -365,20 +382,38 @@ func windPeriodInsights(windows []windWindow, windowInterval time.Duration, minL
 }
 
 func mergeWindInsights(existing, wind []Signal) []Signal {
-	combined := false
+	out := make([]Signal, 0, len(existing)+len(wind))
 	for _, s := range wind {
 		if s.Kind == "combined" {
-			combined = true
+			out = append(out, s)
 		}
 	}
-	out := make([]Signal, 0, len(existing)+len(wind))
+	// Only worsening combined insights can replace a cold temperature trend.
+	combinedCount := len(out)
 	for _, s := range existing {
-		if combined && s.Kind == "combined" {
-			continue
+		redundant := false
+		if s.Code == "temperature_trend" && s.Params["interpretation"] == "heating_increase" {
+			start, end := s.Params["start"], s.Params["end"]
+			if start != nil && end != nil {
+				for _, combined := range out[:combinedCount] {
+					worsening, _ := combined.Params["worsening"].(bool)
+					if worsening && start == combined.Params["start"] && end == combined.Params["end"] {
+						redundant = true
+						break
+					}
+				}
+			}
 		}
-		out = append(out, s)
+		if !redundant {
+			out = append(out, s)
+		}
 	}
-	return append(out, wind...)
+	for _, s := range wind {
+		if s.Kind != "combined" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // These categories are illustrative weather proxies, not turbine power curves.

@@ -348,7 +348,7 @@ func TestCombinedWindConditions(t *testing.T) {
 	if hasWindTitle(dailyWindInsights(days, cfg), title) {
 		t.Fatal("combined with missing solar")
 	}
-	points := windHours(2, 2)
+	points := windHours(2, 2, 2, 2)
 	for i := range points {
 		points[i].Temperature = f(12 - float64(i/6)*4)
 		points[i].SolarIrradiance = f(50)
@@ -360,7 +360,7 @@ func TestCombinedWindConditions(t *testing.T) {
 	}
 	existing := []Signal{{Kind: "temperature", Title: "Keep"}, {Kind: "combined", Title: "Old"}}
 	merged := mergeWindInsights(existing, items)
-	if hasWindTitle(merged, "Old") || !hasWindTitle(merged, "Keep") {
+	if !hasWindTitle(merged, "Old") || !hasWindTitle(merged, "Keep") {
 		t.Fatal("combined merge")
 	}
 	for _, s := range items {

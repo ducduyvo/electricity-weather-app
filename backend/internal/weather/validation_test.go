@@ -69,7 +69,7 @@ func TestHourlyCombinedInsightExcludesInvalidMeasurements(t *testing.T) {
 	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
 	for _, field := range []string{"temperature", "solar"} {
 		for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-			points := windHours(2, 2)
+			points := windHours(2, 2, 2, 2)
 			for i := range points {
 				points[i].Temperature = f(12 - float64(i/6)*4)
 				points[i].SolarIrradiance = f(50)
@@ -77,7 +77,7 @@ func TestHourlyCombinedInsightExcludesInvalidMeasurements(t *testing.T) {
 			if field == "temperature" {
 				points[0].Temperature = f(value)
 			} else {
-				points[0].SolarIrradiance = f(value)
+				points[10].SolarIrradiance = f(value)
 			}
 			items := hourlyWindInsights(points, "UTC", now, DefaultWindInsightConfig())
 			if hasWindTitle(items, "Cold, low-solar and low-wind conditions") {

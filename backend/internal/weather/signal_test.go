@@ -231,7 +231,7 @@ func TestIncompleteTemperatureSuppressesComparisons(t *testing.T) {
 				}
 				got := signals(days)
 				for _, signal := range got {
-					if signal.Kind == "temperature" || signal.Kind == "combined" || signal.Title == "Stable weather outlook" {
+					if signal.Kind == "temperature" || signal.Kind == "combined" || signal.Title == "Stable temperature and solar outlook" {
 						t.Fatalf("incomplete temperature produced comparison: %+v", got)
 					}
 				}
